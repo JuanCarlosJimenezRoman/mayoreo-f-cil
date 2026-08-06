@@ -73,6 +73,13 @@ router.post("/webhooks/discounts", express.json(), async (req, res) => {
       qtyByProduct.set(key, (qtyByProduct.get(key) || 0) + product.quantity);
     }
 
+    // 🔍 LOG TEMPORAL DE DEPURACIÓN - lo sacamos después de confirmar que
+    // los cálculos son correctos.
+    console.log(
+      "[DEBUG] Cantidades por producto:",
+      Object.fromEntries(qtyByProduct)
+    );
+
     const lineItemsWithDiscount = [];
 
     for (const product of cart.products || []) {
@@ -84,6 +91,14 @@ router.post("/webhooks/discounts", express.json(), async (req, res) => {
       const unitPrice = parseFloat(product.price);
       const lineSubtotal = unitPrice * product.quantity;
       const discountAmount = (lineSubtotal * tier.discountPercent) / 100;
+
+      // 🔍 LOG TEMPORAL DE DEPURACIÓN
+      console.log(
+        `[DEBUG] line_item=${product.id} product_id=${product.product_id} ` +
+          `qty_linea=${product.quantity} qty_total_producto=${totalQtyOfThisProduct} ` +
+          `precio_unit=${unitPrice} tier=${tier.discountPercent}% ` +
+          `descuento=${discountAmount.toFixed(2)}`
+      );
 
       lineItemsWithDiscount.push({
         line_item: String(product.id),
