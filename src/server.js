@@ -3,6 +3,8 @@ const express = require("express");
 const { initDb } = require("./db");
 const authRouter = require("./auth");
 const webhookRouter = require("./webhook");
+const productWebhookRouter = require("./productWebhook");
+const adminRouter = require("./admin");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,6 +15,8 @@ app.get("/", (req, res) => {
 
 app.use(authRouter);
 app.use(webhookRouter);
+app.use(productWebhookRouter);
+app.use(adminRouter);
 
 async function start() {
   await initDb(); // crea la tabla 'stores' en Postgres si no existe

@@ -39,19 +39,33 @@ async function main() {
 
   let page = 1;
   let totalSynced = 0;
+  let sinCategoria = [];
 
   while (true) {
-    const { data } = await axios.get(
-      `https://api.tiendanube.com/${API_VERSION}/${STORE_ID}/products`,
-      {
-        headers: {
-          Authentication: `bearer ${ACCESS_TOKEN}`,
-          "User-Agent":
-            APP_USER_AGENT || "Mayoreo App (tu-email@ejemplo.com)",
-        },
-        params: { per_page: 50, page },
-      }
-    );
+    let data;
+    try {
+      const response = await axios.get(
+        `https://api.tiendanube.com/${API_VERSION}/${STORE_ID}/products`,
+        {
+          headers: {
+            Authentication: `bearer ${ACCESS_TOKEN}`,
+            "User-Agent":
+              APP_USER_AGENT || "Mayoreo App (tu-email@ejemplo.com)",
+          },
+          params: { per_page: 50, page },
+        }
+      );
+      data = response.data;
+    } catch (err) {
+      // La API devuelve 404 "Last page is N" cuando pedís una página
+      // que ya no existe — es la forma en que nos avisa que terminamos,
+      // no un error real.
+      const isLastPageError =
+        err.response?.status === 404 &&
+        /last page/i.test(err.response?.data?.description || "");
+      if (isLastPageError) break;
+      throw err; // cualquier otro error sí es real, lo dejamos explotar
+    }
 
     const products = Array.isArray(data) ? data : data.data || [];
     if (products.length === 0) break;
@@ -63,6 +77,7 @@ async function main() {
       console.log(
         `  ${product.id} — ${name} → categorías: [${categoryIds.join(", ")}]`
       );
+      if (categoryIds.length === 0) sinCategoria.push(`${product.id} (${name})`);
       totalSynced++;
     }
 
@@ -70,6 +85,14 @@ async function main() {
   }
 
   console.log(`\n✅ Sincronizados ${totalSynced} productos.`);
+
+  if (sinCategoria.length > 0) {
+    console.log(
+      `\n⚠️  ${sinCategoria.length} producto(s) sin ninguna categoría asignada ` +
+        `(no van a recibir mayoreo hasta que les asignes una en Tiendanube):`
+    );
+    sinCategoria.forEach((p) => console.log(`   - ${p}`));
+  }
 }
 
 main()

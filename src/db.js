@@ -98,6 +98,14 @@ async function getStore(storeId) {
   return rows[0] || null;
 }
 
+async function getFirstStore() {
+  const { rows } = await pool.query(
+    `SELECT store_id, access_token, scope, promotion_id
+     FROM stores ORDER BY updated_at DESC LIMIT 1;`
+  );
+  return rows[0] || null;
+}
+
 // --- Categorías -------------------------------------------------
 
 async function upsertCategory(id, name, parentId) {
@@ -214,10 +222,26 @@ async function getAllTierRules() {
   return map;
 }
 
+async function deleteCategoryGroup(categoryId) {
+  await pool.query(`DELETE FROM category_groups WHERE category_id = $1;`, [
+    String(categoryId),
+  ]);
+}
+
+async function deleteTierRuleGroup(groupKey) {
+  await pool.query(`DELETE FROM tier_price_rules WHERE group_key = $1;`, [
+    groupKey,
+  ]);
+  await pool.query(`DELETE FROM category_groups WHERE group_key = $1;`, [
+    groupKey,
+  ]);
+}
+
 module.exports = {
   initDb,
   saveStore,
   getStore,
+  getFirstStore,
   pool,
   upsertCategory,
   listCategories,
@@ -225,8 +249,10 @@ module.exports = {
   deleteProduct,
   getCategoriesForProducts,
   setCategoryGroup,
+  deleteCategoryGroup,
   getAllCategoryGroups,
   setTierRule,
   clearTierRules,
+  deleteTierRuleGroup,
   getAllTierRules,
 };

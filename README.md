@@ -154,10 +154,40 @@ El archivo `src/tiers.js` (con los escalones por % que usábamos antes) ya
 querés combinar ambos modelos (% para unos productos, precio fijo para
 otros). Si no lo vas a usar, lo podés borrar sin problema.
 
-- **Base de datos**: el proyecto guarda tokens en un archivo `db.json` para que
-  puedas arrancar rápido. Si vas a dejarlo en producción de forma seria,
-  cambialo por una base de datos real (ver comentarios en `src/db.js`) — un
-  archivo plano se puede perder si tu hosting reinicia el disco.
+## 8. Panel de administración (dashboard)
+
+Entrá a `https://tu-servidor.onrender.com/admin` con el usuario y contraseña
+que definiste en `ADMIN_USER` / `ADMIN_PASSWORD`. Desde ahí podés, sin tocar
+código ni la Shell de Render:
+
+1. **Ver tus categorías reales** (traídas en vivo de Tiendanube) y asignarles
+   un "grupo de mayoreo" — categorías con el mismo nombre de grupo suman sus
+   cantidades entre sí (ej: Pulseras Infantil + Adulto).
+2. **Editar la tabla de precios** de cada grupo (cantidad mínima → precio por
+   unidad).
+3. **Forzar una resincronización manual** de productos si sospechás que algo
+   quedó desactualizado (normalmente no hace falta, ver siguiente sección).
+
+⚠️ El usuario/contraseña por defecto (`admin` / `cambiame`) es solo para que
+no se rompa si te olvidás de configurarlo — **cambialo** en las variables de
+entorno de Render antes de usarlo en serio.
+
+## 9. Sincronización automática de productos nuevos
+
+Para que no tengas que correr `sync-products.js` cada vez que agregás un
+producto, la app se suscribe a los webhooks de Tiendanube de
+`product/created`, `product/updated` y `product/deleted`. Correlo **una sola
+vez**, después de que tu servidor esté desplegado con la URL final:
+
+```bash
+ACCESS_TOKEN=xxx STORE_ID=xxx node scripts/register-product-webhooks.js
+```
+
+A partir de ahí, cualquier producto que crees, edites o borres en Tiendanube
+va a actualizar sola la tabla `product_categories` de tu base — no hace falta
+que hagas nada más. El botón "Sincronizar productos ahora" del dashboard
+queda como respaldo manual por si algún webhook se pierde.
+
 - **Un solo comando por promoción compitiendo**: si en el futuro agregás
   cupones o la regla nativa de Tiendanube, revisá que no compitan con esta app
   para el mismo producto (Tiendanube prioriza mostrar un solo cartel de
