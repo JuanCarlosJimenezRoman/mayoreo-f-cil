@@ -1,50 +1,67 @@
 /**
- * scripts/test-manual.js
+ * promotions.js
  * -------------------------------------------------------------
- * Uso: cuando generás el código de prueba en el panel de socios y
- * corrés el curl que te dan, te devuelve un JSON con access_token y
- * user_id (store_id). Pasalos como variables de entorno y corré:
+ * Registra la "promoción" de mayoreo en Tiendanube, y por separado
+ * registra la URL de callback (a donde Tiendanube manda el estado
+ * del carrito en cada cambio).
  *
- *   ACCESS_TOKEN=xxxx STORE_ID=1234 node scripts/test-manual.js
+ * Nota: aprendimos en la práctica que `callback_url` NO va dentro del
+ * body de POST /promotions (la API devuelve 400 si lo mandás ahí). El
+ * callback se registra aparte con PUT /discounts/callbacks.
  *
- * (Podés correrlo así directo en la pestaña "Shell" de tu Web Service
- * en Render, sin necesidad de editar código ni redeployar).
- *
- * Esto va a: inicializar la tabla en Postgres, registrar la promoción
- * de mayoreo para esa tienda, y guardar todo en la base — así podés
- * probar el webhook de /webhooks/discounts sin haber completado
- * todavía el flujo OAuth real por el navegador.
+ * ⚠️ El campo exacto del body de PUT /discounts/callbacks (le puse
+ * "url") es mi mejor estimación en base a los nombres típicos que usa
+ * esta API en otros lados. Si la API responde con un error de
+ * "property X should not exist" o "X is required", significa que el
+ * campo real se llama distinto — la buena noticia es que la API te lo
+ * va a decir explícitamente en el mensaje de error, así que solo hay
+ * que ajustar el nombre acá.
  * -------------------------------------------------------------
  */
 
-require("dotenv").config();
-const { initDb, saveStore } = require("../src/db");
-const { registerPromotion } = require("../src/promotions");
+const axios = require("axios");
 
-const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
-const STORE_ID = process.env.STORE_ID;
+const API_VERSION = "2025-03";
+const { APP_URL, APP_USER_AGENT } = process.env;
 
-async function main() {
-  if (!ACCESS_TOKEN || !STORE_ID) {
-    console.error(
-      "⚠️  Pasá ACCESS_TOKEN y STORE_ID como variables de entorno. Ejemplo:\n" +
-        "   ACCESS_TOKEN=abc123 STORE_ID=456789 node scripts/test-manual.js"
-    );
-    process.exit(1);
-  }
-
-  await initDb();
-  await saveStore(STORE_ID, { access_token: ACCESS_TOKEN });
-
-  console.log(`Registrando promoción para la tienda ${STORE_ID}...`);
-  const promotionId = await registerPromotion(STORE_ID, ACCESS_TOKEN);
-  await saveStore(STORE_ID, { promotion_id: promotionId });
-
-  console.log("✅ Listo. promotion_id:", promotionId);
-  process.exit(0);
+function authHeaders(accessToken) {
+  return {
+    Authentication: `bearer ${accessToken}`,
+    "Content-Type": "application/json",
+    "User-Agent": APP_USER_AGENT || "Mayoreo App (tu-email@ejemplo.com)",
+  };
 }
 
-main().catch((err) => {
-  console.error("❌ Error:", err.response?.data || err.message);
-  process.exit(1);
-});
+async function registerCallback(storeId, accessToken) {
+  const callbackUrl = `${APP_URL}/webhooks/discounts`;
+
+  const response = await axios.put(
+    `https://api.tiendanube.com/${API_VERSION}/${storeId}/discounts/callbacks`,
+    { url: callbackUrl },
+    { headers: authHeaders(accessToken) }
+  );
+
+  return response.data;
+}
+
+async function registerPromotion(storeId, accessToken) {
+  // Primero registramos a dónde debe avisarnos Tiendanube de cada
+  // cambio de carrito.
+  await registerCallback(storeId, accessToken);
+
+  const body = {
+    name: "Mayoreo BASKATBALL 23",
+    allocation_type: "line_item", // el descuento se aplica producto por producto
+    active: true,
+  };
+
+  const response = await axios.post(
+    `https://api.tiendanube.com/${API_VERSION}/${storeId}/promotions`,
+    body,
+    { headers: authHeaders(accessToken) }
+  );
+
+  return response.data.id;
+}
+
+module.exports = { registerPromotion, registerCallback };
