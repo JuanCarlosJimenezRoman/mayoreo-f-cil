@@ -1,0 +1,98 @@
+# Mayoreo App — BASKATBALL 23
+
+App privada para tu tienda Tiendanube que aplica **descuentos progresivos por
+cantidad** (mayoreo), visibles automáticamente en el carrito, **solo para
+clientes registrados/logueados**.
+
+Por defecto viene configurado así (editable en `src/tiers.js`):
+
+| Cantidad del mismo producto | Descuento |
+|---|---|
+| 10 o más unidades | 10% |
+| 20 o más unidades | 15% |
+| 50 o más unidades | 20% |
+
+---
+
+## 1. Registrate como Partner/Socio de Tiendanube
+
+1. Andá a https://www.tiendanube.com/partners (o https://www.nuvemshop.com.br/parceiros)
+   y creá tu cuenta de socio/desarrollador (es gratis).
+2. Dentro del panel de socio, entrá a **"Apps"** y creá una nueva app.
+   - Tipo: app privada (para uso exclusivo de tu propia tienda) o pública, según
+     te lo permita el panel — para un solo comercio alcanza con privada.
+   - **Redirect URL / URL de redirección**: `https://TU-DOMINIO/auth/callback`
+   - **Scopes**: como mínimo necesitás `read_products`, `read_orders` (y los que
+     pida la Discount API para promociones).
+3. Guardá el `Client ID` y `Client Secret` que te da — van en tu `.env`.
+4. Buscá la sección de **Discount API / Webhooks de promociones** dentro de tu
+   app y revisá el `openapi.yml` que linkean ahí (ver nota en `src/promotions.js`
+   sobre por qué es importante confirmar el formato exacto antes de producción).
+
+## 2. Conseguí dónde alojar el servidor
+
+Como charlamos, no hace falta nada muy grande. Este servidor es liviano
+(Node.js + Express) y solo necesita:
+- Estar siempre encendido (para responder los webhooks de carrito en <800ms).
+- Tener HTTPS (obligatorio, Tiendanube no llama a URLs sin SSL).
+
+Opciones económicas para arrancar:
+- **Railway** o **Render**: planes desde ~USD 5-7/mes, deploy con un `git push`, HTTPS automático. Los más simples para empezar.
+- **Un VPS chico** (DigitalOcean, Hetzner, Contabo): desde ~USD 4-6/mes, requiere que configures Node + Nginx/Certbot vos mismo (más control, más trabajo).
+- **Fly.io / Vercel** (funciones serverless): puede tener capa gratuita, pero para webhooks con estado (guardar tokens) conviene un server "always-on" simple como Railway/Render.
+
+Para arrancar y probar rápido, te recomiendo Railway o Render.
+
+## 3. Configurar el proyecto
+
+```bash
+npm install
+cp .env.example .env
+# completá CLIENT_ID, CLIENT_SECRET, APP_URL con tus datos reales
+npm start
+```
+
+## 4. Instalar la app en tu tienda
+
+Una vez tengas el server corriendo en tu dominio público, andá a:
+
+```
+https://www.tiendanube.com/apps/{TU_APP_ID}/authorize
+```
+
+(reemplazá `{TU_APP_ID}` por el ID que te dio el panel de socios). Vas a ver la
+pantalla de autorización de tu propia tienda BASKATBALL 23; al aceptar, la app
+se instala, se guarda el token, y se registra automáticamente la promoción de
+mayoreo (todo eso lo hace `src/auth.js`).
+
+## 5. Probar
+
+1. Entrá a tu tienda con una cuenta de cliente registrada (logueate).
+2. Agregá 10+ unidades de un mismo producto al carrito.
+3. El descuento debería reflejarse en el carrito automáticamente. Si no lo ves,
+   revisá los logs de tu servidor — ahí vas a ver cada request que llega a
+   `/webhooks/discounts` y cualquier error.
+4. Probá también como invitado (sin loguearte): NO debería aplicar descuento.
+
+## 6. Qué archivo tocar para cada cosa
+
+| Querés cambiar... | Archivo |
+|---|---|
+| Los escalones de cantidad/porcentaje | `src/tiers.js` |
+| Si el mayoreo agrupa por producto o por variante (SKU/talle) | `src/webhook.js` (comentario "AGRUPACIÓN") |
+| El texto que ve el cliente en el carrito | `src/webhook.js` (`display_text`) |
+| Cómo se registra la promoción | `src/promotions.js` |
+
+## Notas importantes
+
+- **Base de datos**: el proyecto guarda tokens en un archivo `db.json` para que
+  puedas arrancar rápido. Si vas a dejarlo en producción de forma seria,
+  cambialo por una base de datos real (ver comentarios en `src/db.js`) — un
+  archivo plano se puede perder si tu hosting reinicia el disco.
+- **Un solo comando por promoción compitiendo**: si en el futuro agregás
+  cupones o la regla nativa de Tiendanube, revisá que no compitan con esta app
+  para el mismo producto (Tiendanube prioriza mostrar un solo cartel de
+  descuento a la vez).
+- **Verificación de firma**: Tiendanube va a habilitar firma de requests para
+  este webhook (mencionado como "upcoming" en su doc). Cuando esté disponible,
+  conviene agregarla para más seguridad.
