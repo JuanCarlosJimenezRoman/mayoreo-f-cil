@@ -18,12 +18,12 @@
 require("dotenv").config();
 const { initDb, setCategoryGroup, clearTierRules, setTierRule, pool } = require("../src/db");
 
-// 👇 EDITÁ ESTO CON TUS IDs REALES (sacados de sync-categories.js)
+// 👇 IDs reales sacados de sync-categories.js (6 de agosto 2026)
 const CONFIG = [
   {
     groupKey: "pulseras",
-    // Ambas subcategorías suman para el mismo mayoreo (infantil + adulto)
-    categoryIds: ["PEGA_ID_PULSERAS_INFANTIL", "PEGA_ID_PULSERAS_ADULTO"],
+    // Adulto (40235319) + Infantil (40235322) suman para el mismo mayoreo
+    categoryIds: ["40235319", "40235322"],
     normalPrice: 60,
     tiers: [
       { minQty: 50, unitPrice: 35 },
@@ -32,12 +32,16 @@ const CONFIG = [
   },
   {
     groupKey: "calcetas-unicornio",
+    // ⚠️ PENDIENTE: todavía no existe la categoría "Calcetas > Unicornio"
+    // en tu tienda. Creála en el admin, volvé a correr
+    // sync-categories.js, y reemplazá este ID.
     categoryIds: ["PEGA_ID_CALCETAS_UNICORNIO"],
     normalPrice: 300,
     tiers: [{ minQty: 10, unitPrice: 200 }],
   },
   {
     groupKey: "calcetas-elite",
+    // ⚠️ PENDIENTE: mismo caso, falta crear "Calcetas > Elite"
     categoryIds: ["PEGA_ID_CALCETAS_ELITE"],
     normalPrice: 200,
     tiers: [
@@ -52,18 +56,21 @@ async function main() {
     g.categoryIds.some((id) => id.startsWith("PEGA_ID_"))
   );
   if (hasPending) {
-    console.error(
-      "⚠️  Todavía hay IDs de categoría sin completar en scripts/seed-tier-rules.js.\n" +
-        "   Corré primero: ACCESS_TOKEN=... STORE_ID=... node scripts/sync-categories.js\n" +
-        "   y reemplazá los PEGA_ID_... por los IDs reales que te muestre."
+    console.warn(
+      "⚠️  Hay grupos con IDs pendientes (todavía no existen esas categorías en tu tienda).\n" +
+        "   Esos grupos se van a SALTAR por ahora; el resto se carga normal.\n"
     );
-    process.exitCode = 1;
-    return;
   }
 
   await initDb();
 
   for (const group of CONFIG) {
+    const pending = group.categoryIds.some((id) => id.startsWith("PEGA_ID_"));
+    if (pending) {
+      console.log(`⏭️  Saltando "${group.groupKey}" (faltan IDs reales).`);
+      continue;
+    }
+
     for (const categoryId of group.categoryIds) {
       await setCategoryGroup(categoryId, group.groupKey);
     }
