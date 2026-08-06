@@ -2,48 +2,94 @@
  * webhook.js
  * -------------------------------------------------------------
  * Este endpoint es el "callback_url" que registramos en promotions.js.
- * Tiendanube lo va a llamar por POST cada vez que un cliente modifique
- * el carrito (agregue producto, cambie cantidad, etc.), enviando todo
- * el estado del carrito.
+ * Tiendanube lo llama por POST cada vez que un cliente modifica el
+ * carrito, enviando todo el estado del carrito.
  *
- * Reglas de negocio implementadas:
+ * NUEVA LÓGICA (precio fijo por cantidad, agrupado por categoría):
  *  1. Solo clientes REGISTRADOS (logueados) acceden al mayoreo.
- *     Lo sabemos porque `customer.id` viene null si es invitado.
- *  2. El descuento es progresivo según la cantidad total de un mismo
- *     producto en el carrito (ver tiers.js para editar los escalones).
- *  3. Respondemos con "commands" que le dicen a Tiendanube qué
- *     descuento aplicar a cada línea del carrito.
+ *  2. Cada producto del carrito pertenece a una o más categorías. Esas
+ *     categorías están agrupadas en "group_key" (ver category_groups):
+ *     por ejemplo, "pulseras-infantil" y "pulseras-adulto" comparten
+ *     el group_key "pulseras", así que sus cantidades se SUMAN.
+ *     "calcetas-unicornio" y "calcetas-elite" tienen group_keys
+ *     distintos, así que cuentan por separado.
+ *  3. Para cada group_key, sumamos las unidades totales en el carrito
+ *     y buscamos en tier_price_rules el precio por unidad que
+ *     corresponde a esa cantidad (el escalón más alto que se cumple).
+ *  4. El descuento de cada línea = (precio normal - precio del tier)
+ *     × cantidad de esa línea.
  *
- * ⏱️ OJO: Tiendanube da un timeout de 800ms para esta respuesta. Toda
- * la lógica de descuento es cálculo en memoria (sin llamadas externas),
- * pero como ahora usamos Postgres, agregamos una pequeña caché en
- * memoria del promotion_id por tienda para no pagar el costo de una
- * consulta a la base en cada carrito. La caché se refresca sola cada
- * CACHE_TTL_MS.
- *
- * Referencia:
- * https://tiendanube.github.io/api-documentation/resources/discounts
+ * ⏱️ OJO: 800ms de límite. Toda la data (categorías, agrupaciones,
+ * tiers) se lee de Postgres con caché en memoria (ver CACHE_TTL_MS)
+ * para no pagar el costo de consultar la base en cada carrito.
  * -------------------------------------------------------------
  */
 
 const express = require("express");
-const { getStore } = require("./db");
-const { getTierForQuantity } = require("./tiers");
+const {
+  getStore,
+  getCategoriesForProducts,
+  getAllCategoryGroups,
+  getAllTierRules,
+} = require("./db");
 
 const router = express.Router();
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
-const storeCache = new Map(); // store_id -> { promotion_id, fetchedAt }
 
+// Caché de promotion_id por tienda
+const storeCache = new Map();
 async function getPromotionIdCached(storeId) {
   const cached = storeCache.get(storeId);
-  const isFresh = cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS;
-  if (isFresh) return cached.promotion_id;
-
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return cached.promotion_id;
+  }
   const store = await getStore(storeId);
   const promotionId = store?.promotion_id || null;
   storeCache.set(storeId, { promotion_id: promotionId, fetchedAt: Date.now() });
   return promotionId;
+}
+
+// Caché de category_groups y tier_price_rules (cambian poco)
+let configCache = null;
+let configCacheFetchedAt = 0;
+async function getConfigCached() {
+  if (configCache && Date.now() - configCacheFetchedAt < CACHE_TTL_MS) {
+    return configCache;
+  }
+  const [categoryGroups, tierRules] = await Promise.all([
+    getAllCategoryGroups(),
+    getAllTierRules(),
+  ]);
+  configCache = { categoryGroups, tierRules };
+  configCacheFetchedAt = Date.now();
+  return configCache;
+}
+
+/**
+ * Dado el mapa de categorías por producto y el mapa de agrupación,
+ * devuelve a qué group_key pertenece un product_id (o null si no
+ * tiene mayoreo configurado). Si un producto está en varias
+ * categorías agrupadas, se usa la primera que matchee.
+ */
+function resolveGroupKey(productId, categoriesByProduct, categoryGroups) {
+  const categoryIds = categoriesByProduct[productId] || [];
+  for (const categoryId of categoryIds) {
+    if (categoryGroups[categoryId]) return categoryGroups[categoryId];
+  }
+  return null;
+}
+
+/**
+ * Busca en la lista de tiers (ordenada desc por min_qty) el precio
+ * por unidad que corresponde a una cantidad dada.
+ */
+function findTierPrice(tiers, quantity) {
+  if (!tiers) return null;
+  for (const tier of tiers) {
+    if (quantity >= tier.min_qty) return tier.unit_price;
+  }
+  return null;
 }
 
 router.post("/webhooks/discounts", express.json(), async (req, res) => {
@@ -51,54 +97,51 @@ router.post("/webhooks/discounts", express.json(), async (req, res) => {
 
   try {
     const promotionId = await getPromotionIdCached(String(cart.store_id));
+    if (!promotionId) return res.status(204).send();
 
-    if (!promotionId) {
-      // No tenemos una promoción registrada para esta tienda todavía.
-      return res.status(204).send();
-    }
-
-    // Regla 1: solo clientes registrados / logueados.
     const isRegisteredCustomer = Boolean(cart.customer && cart.customer.id);
-    if (!isRegisteredCustomer) {
-      return res.status(204).send();
+    if (!isRegisteredCustomer) return res.status(204).send();
+
+    const products = cart.products || [];
+    const productIds = [...new Set(products.map((p) => String(p.product_id)))];
+
+    const [categoriesByProduct, { categoryGroups, tierRules }] =
+      await Promise.all([
+        getCategoriesForProducts(productIds),
+        getConfigCached(),
+      ]);
+
+    // 1. Resolver el group_key de cada línea y sumar cantidades por grupo
+    const qtyByGroup = new Map();
+    const groupKeyByLine = new Map(); // line id -> group_key
+
+    for (const product of products) {
+      const groupKey = resolveGroupKey(
+        String(product.product_id),
+        categoriesByProduct,
+        categoryGroups
+      );
+      if (!groupKey) continue; // este producto no tiene mayoreo configurado
+
+      groupKeyByLine.set(product.id, groupKey);
+      qtyByGroup.set(groupKey, (qtyByGroup.get(groupKey) || 0) + product.quantity);
     }
 
-    // Regla 2: agrupamos cantidades por product_id.
-    // AGRUPACIÓN: si preferís que el mayoreo cuente por variante (SKU)
-    // individual en vez de por producto, cambiá la clave del Map de
-    // `product.product_id` a `product.variant_id`.
-    const qtyByProduct = new Map();
-    for (const product of cart.products || []) {
-      const key = product.product_id;
-      qtyByProduct.set(key, (qtyByProduct.get(key) || 0) + product.quantity);
-    }
-
-    // 🔍 LOG TEMPORAL DE DEPURACIÓN - lo sacamos después de confirmar que
-    // los cálculos son correctos.
-    console.log(
-      "[DEBUG] Cantidades por producto:",
-      Object.fromEntries(qtyByProduct)
-    );
-
+    // 2. Para cada línea, calcular el descuento según el tier de su grupo
     const lineItemsWithDiscount = [];
 
-    for (const product of cart.products || []) {
-      const totalQtyOfThisProduct = qtyByProduct.get(product.product_id);
-      const tier = getTierForQuantity(totalQtyOfThisProduct);
+    for (const product of products) {
+      const groupKey = groupKeyByLine.get(product.id);
+      if (!groupKey) continue;
 
-      if (!tier) continue; // no llega al mínimo de ningún escalón
+      const totalQtyOfGroup = qtyByGroup.get(groupKey);
+      const tierUnitPrice = findTierPrice(tierRules[groupKey], totalQtyOfGroup);
+      if (tierUnitPrice === null) continue; // no llega al mínimo de ningún tier
 
-      const unitPrice = parseFloat(product.price);
-      const lineSubtotal = unitPrice * product.quantity;
-      const discountAmount = (lineSubtotal * tier.discountPercent) / 100;
+      const normalUnitPrice = parseFloat(product.price);
+      if (tierUnitPrice >= normalUnitPrice) continue; // sin descuento real
 
-      // 🔍 LOG TEMPORAL DE DEPURACIÓN
-      console.log(
-        `[DEBUG] line_item=${product.id} product_id=${product.product_id} ` +
-          `qty_linea=${product.quantity} qty_total_producto=${totalQtyOfThisProduct} ` +
-          `precio_unit=${unitPrice} tier=${tier.discountPercent}% ` +
-          `descuento=${discountAmount.toFixed(2)}`
-      );
+      const discountAmount = (normalUnitPrice - tierUnitPrice) * product.quantity;
 
       lineItemsWithDiscount.push({
         line_item: String(product.id),
@@ -110,9 +153,6 @@ router.post("/webhooks/discounts", express.json(), async (req, res) => {
     }
 
     if (lineItemsWithDiscount.length === 0) {
-      // Ningún producto llega al mínimo de mayoreo: nos aseguramos de
-      // quitar cualquier descuento previo que hubiera quedado aplicado
-      // (por ejemplo, si el cliente bajó la cantidad).
       return res.json({
         commands: [
           {
@@ -130,7 +170,7 @@ router.post("/webhooks/discounts", express.json(), async (req, res) => {
           specs: {
             promotion_id: promotionId,
             currency: cart.currency,
-            display_text: { "es-mx": "Descuento por mayoreo" },
+            display_text: { "es-mx": "Precio de mayoreo" },
             line_items: lineItemsWithDiscount,
           },
         },
@@ -138,9 +178,6 @@ router.post("/webhooks/discounts", express.json(), async (req, res) => {
     });
   } catch (err) {
     console.error("Error procesando webhook de carrito:", err);
-    // Ante cualquier error, no mandamos comandos inválidos: Tiendanube
-    // ya de por sí borra todo si la respuesta es inválida, así que
-    // preferimos responder 204 (sin cambios) y loguear el error.
     return res.status(204).send();
   }
 });

@@ -109,7 +109,50 @@ mayoreo (todo eso lo hace `src/auth.js`).
 | El texto que ve el cliente en el carrito | `src/webhook.js` (`display_text`) |
 | Cómo se registra la promoción | `src/promotions.js` |
 
-## Notas importantes
+## 7. Mayoreo por categoría con precio fijo (pulseras, calcetas, etc.)
+
+El sistema ahora soporta un modelo más flexible: en vez de "% de descuento
+según cantidad de un producto", podés definir **tablas de precio por
+unidad según la cantidad total comprada dentro de una categoría** (o grupo
+de categorías). Ejemplo real que armamos:
+
+- **Pulseras** (infantil + adulto, sumadas): 50+ piezas → $35 c/u, 100+ → $30 c/u
+- **Calcetas Unicornio**: 10+ piezas → $200 c/u
+- **Calcetas Elite**: 10+ piezas → $150 c/u, 15+ piezas → $135 c/u
+
+### Cómo cargar esto en tu tienda
+
+```bash
+# 1. Ver los IDs reales de tus categorías/subcategorías
+ACCESS_TOKEN=xxx STORE_ID=xxx node scripts/sync-categories.js
+
+# 2. Editar scripts/seed-tier-rules.js con esos IDs y tus precios reales
+
+# 3. Cargar la configuración en la base de datos
+node scripts/seed-tier-rules.js
+
+# 4. Sincronizar qué categoría tiene cada producto
+ACCESS_TOKEN=xxx STORE_ID=xxx node scripts/sync-products.js
+```
+
+### Importante: esto es una sincronización manual (por ahora)
+
+Los scripts 1 y 4 traen una "foto" de tus categorías y productos en ese
+momento. Si después agregás productos nuevos o les cambiás la categoría
+en el admin de Tiendanube, **hay que volver a correr `sync-products.js`**
+para que el mayoreo los detecte correctamente.
+
+La forma correcta de automatizar esto a futuro es suscribirse a los
+webhooks de `product/created`, `product/updated` y `product/deleted` de
+Tiendanube (no confundir con el webhook de descuentos que ya tenemos) —
+queda pendiente como mejora, avisame cuando quieras que lo armemos.
+
+### Nota sobre `src/tiers.js`
+
+El archivo `src/tiers.js` (con los escalones por % que usábamos antes) ya
+**no lo usa** `webhook.js` — quedó como referencia por si en el futuro
+querés combinar ambos modelos (% para unos productos, precio fijo para
+otros). Si no lo vas a usar, lo podés borrar sin problema.
 
 - **Base de datos**: el proyecto guarda tokens en un archivo `db.json` para que
   puedas arrancar rápido. Si vas a dejarlo en producción de forma seria,
