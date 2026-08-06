@@ -127,21 +127,27 @@ router.post("/webhooks/discounts", express.json(), async (req, res) => {
       qtyByGroup.set(groupKey, (qtyByGroup.get(groupKey) || 0) + product.quantity);
     }
 
-    // 2. Para cada línea, calcular el descuento según el tier de su grupo
+    // 2. Para cada línea, calcular el descuento según el tier de su grupo.
+    //    IMPORTANTE: incluimos TODAS las líneas que pertenecen a algún
+    //    grupo de mayoreo, aunque el descuento sea $0 — si una línea deja
+    //    de calificar (por ejemplo, bajó la cantidad) y no la incluimos
+    //    explícitamente, Tiendanube deja pegado el descuento anterior en
+    //    vez de sacarlo. Mandar amount="0.00" es lo que efectivamente lo
+    //    "resetea".
     const lineItemsWithDiscount = [];
 
     for (const product of products) {
       const groupKey = groupKeyByLine.get(product.id);
-      if (!groupKey) continue;
+      if (!groupKey) continue; // este producto nunca tuvo mayoreo, no lo tocamos
 
       const totalQtyOfGroup = qtyByGroup.get(groupKey);
       const tierUnitPrice = findTierPrice(tierRules[groupKey], totalQtyOfGroup);
-      if (tierUnitPrice === null) continue; // no llega al mínimo de ningún tier
-
       const normalUnitPrice = parseFloat(product.price);
-      if (tierUnitPrice >= normalUnitPrice) continue; // sin descuento real
 
-      const discountAmount = (normalUnitPrice - tierUnitPrice) * product.quantity;
+      const appliesDiscount = tierUnitPrice !== null && tierUnitPrice < normalUnitPrice;
+      const discountAmount = appliesDiscount
+        ? (normalUnitPrice - tierUnitPrice) * product.quantity
+        : 0;
 
       lineItemsWithDiscount.push({
         line_item: String(product.id),
