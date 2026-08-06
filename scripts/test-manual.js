@@ -3,9 +3,12 @@
  * -------------------------------------------------------------
  * Uso: cuando generás el código de prueba en el panel de socios y
  * corrés el curl que te dan, te devuelve un JSON con access_token y
- * user_id (store_id). Pegalos acá abajo y corré:
+ * user_id (store_id). Pasalos como variables de entorno y corré:
  *
- *   node scripts/test-manual.js
+ *   ACCESS_TOKEN=xxxx STORE_ID=1234 node scripts/test-manual.js
+ *
+ * (Podés correrlo así directo en la pestaña "Shell" de tu Web Service
+ * en Render, sin necesidad de editar código ni redeployar).
  *
  * Esto va a: inicializar la tabla en Postgres, registrar la promoción
  * de mayoreo para esa tienda, y guardar todo en la base — así podés
@@ -18,14 +21,14 @@ require("dotenv").config();
 const { initDb, saveStore } = require("../src/db");
 const { registerPromotion } = require("../src/promotions");
 
-// 👇 PEGÁ ACÁ LOS DATOS QUE TE DEVOLVIÓ EL CURL DE PRUEBA
-const ACCESS_TOKEN = "PEGA_TU_ACCESS_TOKEN_ACA";
-const STORE_ID = "PEGA_TU_USER_ID_ACA";
+const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
+const STORE_ID = process.env.STORE_ID;
 
 async function main() {
-  if (ACCESS_TOKEN.startsWith("PEGA_") || STORE_ID.startsWith("PEGA_")) {
+  if (!ACCESS_TOKEN || !STORE_ID) {
     console.error(
-      "⚠️  Editá scripts/test-manual.js y completá ACCESS_TOKEN y STORE_ID antes de correrlo."
+      "⚠️  Pasá ACCESS_TOKEN y STORE_ID como variables de entorno. Ejemplo:\n" +
+        "   ACCESS_TOKEN=abc123 STORE_ID=456789 node scripts/test-manual.js"
     );
     process.exit(1);
   }
