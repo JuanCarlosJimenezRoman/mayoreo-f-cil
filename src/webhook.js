@@ -14,9 +14,12 @@
  *  3. Respondemos con "commands" que le dicen a Tiendanube qué
  *     descuento aplicar a cada línea del carrito.
  *
- * ⏱️ OJO: Tiendanube da un timeout de 800ms para esta respuesta. Por
- * eso todo acá es cálculo en memoria, sin llamadas a APIs externas
- * ni consultas lentas a base de datos.
+ * ⏱️ OJO: Tiendanube da un timeout de 800ms para esta respuesta. Toda
+ * la lógica de descuento es cálculo en memoria (sin llamadas externas),
+ * pero como ahora usamos Postgres, agregamos una pequeña caché en
+ * memoria del promotion_id por tienda para no pagar el costo de una
+ * consulta a la base en cada carrito. La caché se refresca sola cada
+ * CACHE_TTL_MS.
  *
  * Referencia:
  * https://tiendanube.github.io/api-documentation/resources/discounts
@@ -29,12 +32,25 @@ const { getTierForQuantity } = require("./tiers");
 
 const router = express.Router();
 
-router.post("/webhooks/discounts", express.json(), (req, res) => {
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+const storeCache = new Map(); // store_id -> { promotion_id, fetchedAt }
+
+async function getPromotionIdCached(storeId) {
+  const cached = storeCache.get(storeId);
+  const isFresh = cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS;
+  if (isFresh) return cached.promotion_id;
+
+  const store = await getStore(storeId);
+  const promotionId = store?.promotion_id || null;
+  storeCache.set(storeId, { promotion_id: promotionId, fetchedAt: Date.now() });
+  return promotionId;
+}
+
+router.post("/webhooks/discounts", express.json(), async (req, res) => {
   const cart = req.body;
 
   try {
-    const store = getStore(String(cart.store_id));
-    const promotionId = store?.promotion_id;
+    const promotionId = await getPromotionIdCached(String(cart.store_id));
 
     if (!promotionId) {
       // No tenemos una promoción registrada para esta tienda todavía.

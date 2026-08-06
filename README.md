@@ -48,9 +48,35 @@ Para arrancar y probar rápido, te recomiendo Railway o Render.
 ```bash
 npm install
 cp .env.example .env
-# completá CLIENT_ID, CLIENT_SECRET, APP_URL con tus datos reales
+# completá CLIENT_ID, CLIENT_SECRET, APP_URL y DATABASE_URL con tus datos reales
 npm start
 ```
+
+### Base de datos: PostgreSQL
+
+Este proyecto ya viene armado para usar PostgreSQL (ver `src/db.js`). En Render:
+
+1. New > PostgreSQL > plan Free.
+2. Copiá el "Internal Database URL" (si tu Web Service vive en el mismo
+   proyecto de Render) y pegalo en la variable `DATABASE_URL` de tu Web
+   Service (sección Environment).
+3. Al arrancar, el servidor crea solo la tabla `stores` (no hace falta que
+   corras ninguna migración a mano).
+
+### ¿Ya tenés un access_token de la pantalla de prueba del panel de socios?
+
+Si generaste el código curl de prueba (5 min de validez) y ya sacaste tu
+`access_token` y `user_id`, no hace falta esperar a que el flujo OAuth por
+navegador esté funcionando: podés registrar la promoción a mano con:
+
+```bash
+# 1. Editá scripts/test-manual.js y pegá ahí tu ACCESS_TOKEN y STORE_ID
+# 2. Corré:
+node scripts/test-manual.js
+```
+
+Esto te va a dejar la tienda lista en la base para poder probar el webhook
+de `/webhooks/discounts` de una.
 
 ## 4. Instalar la app en tu tienda
 

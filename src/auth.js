@@ -52,12 +52,12 @@ router.get("/auth/callback", async (req, res) => {
     const { access_token, token_type, scope, user_id } = tokenResponse.data;
     const storeId = String(user_id);
 
-    saveStore(storeId, { access_token, scope });
+    await saveStore(storeId, { access_token, scope });
 
     // Registramos automáticamente la promoción de mayoreo apenas
     // se instala la app, así el comerciante no tiene que hacer nada más.
     const promotionId = await registerPromotion(storeId, access_token);
-    saveStore(storeId, { promotion_id: promotionId });
+    await saveStore(storeId, { promotion_id: promotionId });
 
     res.send(
       "¡App instalada correctamente! Ya podés cerrar esta pestaña y volver al admin de tu tienda."

@@ -1,45 +1,70 @@
 /**
- * db.js
+ * db.js (versión PostgreSQL)
  * -------------------------------------------------------------
- * Almacenamiento MINIMO para poder arrancar rápido: guarda todo en
- * un archivo db.json local. Esto sirve para desarrollo y para probar,
- * pero en producción real (server pago, más de una tienda instalada,
- * reinicios del server, etc.) DEBERÍAS reemplazar esto por una base
- * de datos de verdad (Postgres, SQLite con volumen persistente,
- * MongoDB, etc.), porque un archivo JSON se puede corromper o
- * perderse si el hosting reinicia el filesystem.
+ * Reemplaza el almacenamiento en db.json por una tabla en Postgres.
+ * Usa la variable de entorno DATABASE_URL (Render te la da al crear
+ * la base — ver README para el paso a paso).
  *
  * Guardamos, por store_id:
  *  - access_token: token que te da Tiendanube tras el OAuth
- *  - promotion_id: el ID que te devuelve Tiendanube al registrar
+ *  - scope: permisos otorgados
+ *  - promotion_id: el ID que devuelve Tiendanube al registrar
  *                   la promoción (POST /promotions)
  * -------------------------------------------------------------
  */
 
-const fs = require("fs");
-const path = require("path");
+const { Pool } = require("pg");
 
-const DB_PATH = path.join(__dirname, "..", "db.json");
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  // Render Postgres requiere SSL con certificado autofirmado interno.
+  ssl: { rejectUnauthorized: false },
+});
 
-function readDb() {
-  if (!fs.existsSync(DB_PATH)) return { stores: {} };
-  return JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
+async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS stores (
+      store_id TEXT PRIMARY KEY,
+      access_token TEXT,
+      scope TEXT,
+      promotion_id TEXT,
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+  console.log("✅ Tabla 'stores' lista.");
 }
 
-function writeDb(data) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+async function saveStore(storeId, data) {
+  const existing = await getStore(storeId);
+
+  const merged = {
+    access_token: data.access_token ?? existing?.access_token ?? null,
+    scope: data.scope ?? existing?.scope ?? null,
+    promotion_id: data.promotion_id ?? existing?.promotion_id ?? null,
+  };
+
+  await pool.query(
+    `INSERT INTO stores (store_id, access_token, scope, promotion_id, updated_at)
+     VALUES ($1, $2, $3, $4, now())
+     ON CONFLICT (store_id)
+     DO UPDATE SET
+       access_token = EXCLUDED.access_token,
+       scope = EXCLUDED.scope,
+       promotion_id = EXCLUDED.promotion_id,
+       updated_at = now();`,
+    [storeId, merged.access_token, merged.scope, merged.promotion_id]
+  );
+
+  return merged;
 }
 
-function saveStore(storeId, data) {
-  const db = readDb();
-  db.stores[storeId] = { ...(db.stores[storeId] || {}), ...data };
-  writeDb(db);
-  return db.stores[storeId];
+async function getStore(storeId) {
+  const { rows } = await pool.query(
+    `SELECT store_id, access_token, scope, promotion_id
+     FROM stores WHERE store_id = $1;`,
+    [storeId]
+  );
+  return rows[0] || null;
 }
 
-function getStore(storeId) {
-  const db = readDb();
-  return db.stores[storeId] || null;
-}
-
-module.exports = { saveStore, getStore };
+module.exports = { initDb, saveStore, getStore };

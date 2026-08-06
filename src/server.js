@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require("express");
+const { initDb } = require("./db");
 const authRouter = require("./auth");
 const webhookRouter = require("./webhook");
 
@@ -13,6 +14,14 @@ app.get("/", (req, res) => {
 app.use(authRouter);
 app.use(webhookRouter);
 
-app.listen(PORT, () => {
-  console.log(`Servidor escuchando en el puerto ${PORT}`);
+async function start() {
+  await initDb(); // crea la tabla 'stores' en Postgres si no existe
+  app.listen(PORT, () => {
+    console.log(`Servidor escuchando en el puerto ${PORT}`);
+  });
+}
+
+start().catch((err) => {
+  console.error("No se pudo iniciar el servidor:", err);
+  process.exit(1);
 });
