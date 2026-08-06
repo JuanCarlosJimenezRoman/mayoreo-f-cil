@@ -67,4 +67,4 @@ async function getStore(storeId) {
   return rows[0] || null;
 }
 
-module.exports = { initDb, saveStore, getStore };
+module.exports = { initDb, saveStore, getStore, pool };
