@@ -74,7 +74,27 @@ async function initDb() {
     -- versión anterior sin store_id, esto la agrega sin romper nada.
     ALTER TABLE stores ADD COLUMN IF NOT EXISTS admin_token TEXT;
     ALTER TABLE error_log ADD COLUMN IF NOT EXISTS store_id TEXT;
+    ALTER TABLE categories ADD COLUMN IF NOT EXISTS store_id TEXT;
+    ALTER TABLE product_categories ADD COLUMN IF NOT EXISTS store_id TEXT;
+    ALTER TABLE category_groups ADD COLUMN IF NOT EXISTS store_id TEXT;
+    ALTER TABLE tier_price_rules ADD COLUMN IF NOT EXISTS store_id TEXT;
   `);
+
+  // Si estas tablas ya tenían filas de ANTES del modelo multi-tienda,
+  // quedaron con store_id vacío. Se las asignamos a la tienda más
+  // reciente (lo normal si hasta ahora solo tenías una tienda usando
+  // la app), para no perder esa configuración.
+  const { rows: storeRows } = await pool.query(
+    `SELECT store_id FROM stores ORDER BY updated_at DESC LIMIT 1;`
+  );
+  if (storeRows.length > 0) {
+    const fallbackStoreId = storeRows[0].store_id;
+    await pool.query(`UPDATE categories SET store_id = $1 WHERE store_id IS NULL;`, [fallbackStoreId]);
+    await pool.query(`UPDATE product_categories SET store_id = $1 WHERE store_id IS NULL;`, [fallbackStoreId]);
+    await pool.query(`UPDATE category_groups SET store_id = $1 WHERE store_id IS NULL;`, [fallbackStoreId]);
+    await pool.query(`UPDATE tier_price_rules SET store_id = $1 WHERE store_id IS NULL;`, [fallbackStoreId]);
+  }
+
   console.log("✅ Tablas listas.");
 }
 
