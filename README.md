@@ -226,6 +226,42 @@ STORE_ID=8057813 node scripts/register-product-webhooks.js
 
 Si solo tenés una tienda instalada, podés omitir `STORE_ID` y va a usar esa
 automáticamente.
+
+## 11. Landing page, prueba gratis, y plan pago
+
+### Landing page
+
+`https://tu-servidor.onrender.com/` ahora muestra una página pública
+explicando la app (para cuando la enlaces desde la Tienda de Aplicaciones,
+o para mostrarle a comerciantes interesados mientras tanto). Editá el
+precio y el email de contacto en `.env`:
+
+```
+SUPPORT_EMAIL=tu-email@ejemplo.com
+PRICE_MONTHLY=$299 MXN
+```
+
+### Prueba gratis de 15 días
+
+Cada tienda nueva que instala la app arranca con 15 días de prueba
+(`trial_ends_at` en la tabla `stores`). El dashboard le muestra un banner
+con los días restantes. Al vencer, **el dashboard se bloquea** (pantalla de
+"tu prueba terminó") pero **los descuentos que ya configuró le siguen
+funcionando en la tienda** — no le rompés las ventas por no haber pagado,
+solo le impedís seguir configurando cosas nuevas.
+
+⚠️ Las tiendas que ya estaban instaladas antes de este cambio (como
+BASKATBALL 23) quedan automáticamente en plan activo — no las bloquea.
+
+### Activar el plan pago
+
+Todavía no hay un cobro real conectado (depende de si terminás usando el
+sistema nativo de Tiendanube o "compras internas" — confirmalo en
+homologación). Mientras tanto, activalo a mano:
+
+```bash
+STORE_ID=8057813 node scripts/mark-store-paid.js
+```
   cupones o la regla nativa de Tiendanube, revisá que no compitan con esta app
   para el mismo producto (Tiendanube prioriza mostrar un solo cartel de
   descuento a la vez).

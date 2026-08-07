@@ -1,6 +1,8 @@
 require("dotenv").config();
 const express = require("express");
 const { initDb } = require("./db");
+const landingRouter = require("./landing");
+const pagesRouter = require("./pages");
 const authRouter = require("./auth");
 const webhookRouter = require("./webhook");
 const productWebhookRouter = require("./productWebhook");
@@ -9,14 +11,12 @@ const adminRouter = require("./admin");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get("/", (req, res) => {
-  res.send("Mayoreo App para BASKATBALL 23 — corriendo correctamente ✅");
-});
-
 app.get("/robots.txt", (req, res) => {
   res.type("text/plain").send("User-agent: *\nDisallow: /admin\n");
 });
 
+app.use(landingRouter);
+app.use(pagesRouter);
 app.use(authRouter);
 app.use(webhookRouter);
 app.use(productWebhookRouter);

@@ -27,6 +27,8 @@ const {
   getSyncedProductCount,
   getErrorCountSince,
   getProductCountsByGroup,
+  isStoreActive,
+  daysLeftInTrial,
 } = require("./db");
 
 const router = express.Router();
@@ -77,6 +79,25 @@ async function storeAuth(req, res, next) {
 
   req.store = store;
   req.storeId = store.store_id;
+
+  // Gate de suscripción: mientras no conectes un cobro real, esto
+  // corta el acceso al DASHBOARD (no al webhook de descuentos — los
+  // descuentos ya configurados le siguen funcionando a la tienda
+  // aunque no pueda entrar a configurar más cosas) una vez vencida
+  // la prueba gratis de 15 días.
+  if (!isStoreActive(store)) {
+    return res.send(
+      layout(
+        "Prueba finalizada",
+        `<div class="card" style="text-align:center; padding:2.5rem 1.5rem;">
+          <h2 style="justify-content:center">Tu prueba gratis terminó</h2>
+          <p class="section-intro">Los descuentos que ya configuraste le siguen funcionando a tu tienda con normalidad. Para volver a editar la configuración, activá el plan pago.</p>
+          <p class="muted">Escribinos para activarlo: <a href="mailto:${escapeHtml(process.env.SUPPORT_EMAIL || "soporte@tuapp.com")}">${escapeHtml(process.env.SUPPORT_EMAIL || "soporte@tuapp.com")}</a></p>
+        </div>`
+      )
+    );
+  }
+
   next();
 }
 
@@ -447,8 +468,31 @@ router.get("/admin", async (req, res) => {
 
     const savedMsg = req.query.saved ? `<div class="msg">✅ Cambios guardados.</div>` : "";
 
+    const trialBanner =
+      store.plan_status === "trialing"
+        ? `<div class="msg" style="background:#fff4e5;border-color:var(--orange);color:#8a3d0a;">
+             🕐 Te quedan <strong>${daysLeftInTrial(store)} día${daysLeftInTrial(store) === 1 ? "" : "s"}</strong> de prueba gratis.
+           </div>`
+        : "";
+
+    const onboarding =
+      categoriesWithMayoreo === 0
+        ? `<div class="card" style="border-color:var(--orange)">
+             <h2 style="margin-bottom:0.8rem">🚀 Primeros pasos</h2>
+             <ol style="margin:0; padding-left:1.2rem; color:var(--text); font-size:0.9rem; line-height:1.9;">
+               <li>Buscá una categoría en la tabla de abajo y escribile un nombre de grupo (ej: <code>pulseras</code>).</li>
+               <li>Guardá, y va a aparecer una tarjeta nueva más abajo para cargarle la tabla de precios.</li>
+               <li>Cargá cantidad mínima y precio por unidad en cada escalón, y guardá.</li>
+               <li>Listo — el descuento ya queda activo en el carrito de tu tienda.</li>
+             </ol>
+           </div>`
+        : "";
+
     res.send(
-      layout("Mayoreo Admin", savedMsg + scoreboard + section1 + section2 + section3 + section4)
+      layout(
+        "Mayoreo Admin",
+        savedMsg + trialBanner + onboarding + scoreboard + section1 + section2 + section3 + section4
+      )
     );
   } catch (err) {
     console.error("[admin] Error:", err.response?.data || err.message);
