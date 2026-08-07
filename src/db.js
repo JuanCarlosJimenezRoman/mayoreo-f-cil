@@ -270,6 +270,33 @@ async function deleteTierRuleGroup(groupKey) {
   ]);
 }
 
+async function getSyncedProductCount() {
+  const { rows } = await pool.query(
+    `SELECT COUNT(DISTINCT product_id) AS count FROM product_categories;`
+  );
+  return parseInt(rows[0].count, 10);
+}
+
+async function getErrorCountSince(days) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*) AS count FROM error_log WHERE created_at > now() - ($1 || ' days')::interval;`,
+    [days]
+  );
+  return parseInt(rows[0].count, 10);
+}
+
+async function getProductCountsByGroup() {
+  const { rows } = await pool.query(
+    `SELECT cg.group_key, COUNT(DISTINCT pc.product_id) AS count
+     FROM category_groups cg
+     JOIN product_categories pc ON pc.category_id = cg.category_id
+     GROUP BY cg.group_key;`
+  );
+  const map = {};
+  for (const row of rows) map[row.group_key] = parseInt(row.count, 10);
+  return map;
+}
+
 module.exports = {
   initDb,
   saveStore,
@@ -291,4 +318,7 @@ module.exports = {
   logError,
   getRecentErrors,
   clearErrors,
+  getSyncedProductCount,
+  getErrorCountSince,
+  getProductCountsByGroup,
 };

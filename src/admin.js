@@ -1,21 +1,9 @@
 /**
  * admin.js
  * -------------------------------------------------------------
- * Panel de administración simple (HTML plano, sin frameworks) para
- * que puedas, sin tocar código ni la Shell de Render:
- *
- *  1. Ver tus categorías/subcategorías REALES (traídas en vivo de
- *     Tiendanube, no una copia vieja) y asignarles un "grupo de
- *     mayoreo" (varias categorías pueden compartir el mismo grupo,
- *     como Pulseras Infantil + Adulto).
- *  2. Definir la tabla de precios por cantidad de cada grupo.
- *  3. Forzar una resincronización manual de productos si hace falta
- *     (normalmente no hace falta, porque los webhooks de productos
- *     lo hacen solo).
- *
- * Protegido con usuario/contraseña básica (variables de entorno
- * ADMIN_USER / ADMIN_PASSWORD). Si no las configurás, usa valores
- * por defecto SOLO para desarrollo — cambialos antes de producción.
+ * Panel de administración: asignar categorías a grupos de mayoreo,
+ * editar tablas de precio, resincronizar productos, y monitorear
+ * errores. Protegido con usuario/contraseña básica.
  * -------------------------------------------------------------
  */
 
@@ -33,12 +21,15 @@ const {
   setProductCategories,
   getRecentErrors,
   clearErrors,
+  getSyncedProductCount,
+  getErrorCountSince,
+  getProductCountsByGroup,
 } = require("./db");
 
 const router = express.Router();
 const API_VERSION = "2025-03";
 const { APP_USER_AGENT } = process.env;
-const TIER_ROWS = 6; // cantidad de filas editables por tabla de precio
+const TIER_ROWS = 6;
 
 // --- Autenticación básica -----------------------------------------
 
@@ -88,24 +79,196 @@ function layout(title, body) {
 <html lang="es">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
   <title>${escapeHtml(title)}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
-    h1 { font-size: 1.4rem; }
-    h2 { font-size: 1.1rem; margin-top: 2.5rem; border-bottom: 2px solid #eee; padding-bottom: 0.3rem; }
-    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; font-size: 0.9rem; }
-    input[type=text], input[type=number] { width: 100%; box-sizing: border-box; padding: 0.3rem; border: 1px solid #ccc; border-radius: 4px; }
-    button { background: #1a1a1a; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; margin-top: 0.5rem; }
-    button.secondary { background: #999; }
-    .group-block { border: 1px solid #eee; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; }
-    .muted { color: #777; font-size: 0.85rem; }
-    .msg { background: #e6f4ea; border: 1px solid #34a853; padding: 0.6rem 1rem; border-radius: 6px; margin-bottom: 1rem; }
+    :root {
+      --navy: #10192e;
+      --navy-soft: #1a2740;
+      --orange: #e8590c;
+      --orange-soft: #fdece1;
+      --bg: #f4f5f7;
+      --card: #ffffff;
+      --line: #e4e6ea;
+      --text: #1a1d23;
+      --text-muted: #6b7280;
+      --green: #1c8a4e;
+      --radius: 10px;
+      --font-display: 'Barlow Condensed', sans-serif;
+      --font-body: 'Inter', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--orange); }
+
+    .topbar {
+      background: var(--navy);
+      color: white;
+      padding: 1.1rem 1.5rem;
+      display: flex;
+      align-items: baseline;
+      gap: 0.6rem;
+    }
+    .topbar .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--orange); display: inline-block; margin-right: 0.3rem; }
+    .topbar h1 {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 1.5rem;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      margin: 0;
+    }
+    .topbar .subtitle { color: #98a2b8; font-size: 0.85rem; }
+
+    .wrap { max-width: 980px; margin: 0 auto; padding: 1.5rem; }
+
+    /* Scoreboard */
+    .scoreboard {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      margin-bottom: 2rem;
+    }
+    @media (max-width: 700px) { .scoreboard { grid-template-columns: repeat(2, 1fr); } }
+    .stat {
+      background: var(--navy-soft);
+      color: white;
+      border-radius: var(--radius);
+      padding: 0.9rem 1rem;
+      text-align: center;
+    }
+    .stat .num {
+      font-family: var(--font-display);
+      font-size: 2.1rem;
+      font-weight: 700;
+      color: var(--orange);
+      line-height: 1;
+    }
+    .stat .label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #98a2b8;
+      margin-top: 0.3rem;
+    }
+    .stat.alert .num { color: #ff7a7a; }
+
+    h2 {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 1.3rem;
+      letter-spacing: 0.01em;
+      margin: 0 0 0.2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    h2 .step { color: var(--orange); }
+    .section-intro { color: var(--text-muted); font-size: 0.88rem; margin: 0.2rem 0 1rem; }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+
+    input[type=text], input[type=number], input[type=search] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.45rem 0.6rem;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-family: var(--font-body);
+      font-size: 0.9rem;
+    }
+    input:focus, button:focus, a:focus {
+      outline: 2px solid var(--orange);
+      outline-offset: 1px;
+    }
+
+    table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
+    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--line); font-size: 0.87rem; vertical-align: middle; }
+    th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); }
+    tr:hover td { background: #fafafa; }
+
+    .badge {
+      display: inline-block;
+      background: var(--orange-soft);
+      color: var(--orange);
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.1rem 0.5rem;
+      border-radius: 20px;
+    }
+
+    button {
+      background: var(--orange);
+      color: white;
+      border: none;
+      padding: 0.55rem 1.1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: var(--font-body);
+      font-weight: 600;
+      font-size: 0.85rem;
+      transition: filter 0.15s;
+    }
+    button:hover { filter: brightness(0.92); }
+    button.secondary { background: transparent; color: var(--text-muted); border: 1px solid var(--line); }
+    button.secondary:hover { background: #f3f3f3; }
+    @media (prefers-reduced-motion: reduce) { button { transition: none; } }
+
+    .group-block { border: 1px solid var(--line); border-radius: var(--radius); padding: 1.1rem; margin-bottom: 1rem; background: #fcfcfd; }
+    .group-block h3 { font-family: var(--font-display); font-size: 1.1rem; margin: 0 0 0.6rem; display:flex; align-items:center; gap:0.5rem; }
+    .group-actions { display: flex; gap: 0.5rem; margin-top: 0.7rem; align-items: center; }
+
+    .muted { color: var(--text-muted); font-size: 0.85rem; }
+    .msg { background: #e9f7ee; border: 1px solid var(--green); color: #0d5c30; padding: 0.6rem 1rem; border-radius: 6px; margin-bottom: 1.2rem; font-size: 0.88rem; }
+    .empty { padding: 1.2rem; text-align: center; color: var(--text-muted); font-size: 0.88rem; border: 1px dashed var(--line); border-radius: var(--radius); }
+
+    footer { text-align: center; color: var(--text-muted); font-size: 0.78rem; padding: 2rem 0 1rem; }
   </style>
 </head>
 <body>
-  <h1>🏀 Mayoreo — Panel de administración</h1>
-  ${body}
+  <div class="topbar">
+    <span class="dot"></span>
+    <h1>Mayoreo</h1>
+    <span class="subtitle">· panel de administración</span>
+  </div>
+  <div class="wrap">
+    ${body}
+  </div>
+  <footer>Mayoreo App — hecho a medida para tu tienda</footer>
+  <script>
+    // Confirmación antes de acciones destructivas
+    document.querySelectorAll('[data-confirm]').forEach((form) => {
+      form.addEventListener('submit', (e) => {
+        if (!confirm(form.dataset.confirm)) e.preventDefault();
+      });
+    });
+    // Buscador de categorías (filtra filas de la tabla en vivo)
+    const searchInput = document.getElementById('category-search');
+    if (searchInput) {
+      searchInput.addEventListener('input', () => {
+        const q = searchInput.value.trim().toLowerCase();
+        document.querySelectorAll('#category-table tbody tr').forEach((row) => {
+          row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+      });
+    }
+  </script>
 </body>
 </html>`;
 }
@@ -116,19 +279,41 @@ router.get("/admin", async (req, res) => {
   try {
     const store = await getFirstStore();
     if (!store) {
-      return res.send(layout("Mayoreo Admin", "<p>Todavía no hay ninguna tienda instalada.</p>"));
+      return res.send(
+        layout("Mayoreo Admin", '<div class="empty">Todavía no hay ninguna tienda instalada.</div>')
+      );
     }
 
-    const [categories, categoryGroups, tierRules] = await Promise.all([
-      fetchLiveCategories(store),
-      getAllCategoryGroups(),
-      getAllTierRules(),
-    ]);
+    const [categories, categoryGroups, tierRules, productCounts, syncedCount, errorCount7d, recentErrors] =
+      await Promise.all([
+        fetchLiveCategories(store),
+        getAllCategoryGroups(),
+        getAllTierRules(),
+        getProductCountsByGroup(),
+        getSyncedProductCount(),
+        getErrorCountSince(7),
+        getRecentErrors(20),
+      ]);
 
     const nameById = {};
     for (const c of categories) nameById[c.id] = c.name?.es || c.name || c.id;
 
-    // --- Sección 1: tabla de categorías ---
+    // --- Scoreboard ---
+    const categoriesWithMayoreo = Object.keys(categoryGroups).length;
+    const allGroupKeys = [
+      ...new Set([...Object.values(categoryGroups), ...Object.keys(tierRules)]),
+    ].filter(Boolean);
+
+    const scoreboard = `
+      <div class="scoreboard">
+        <div class="stat"><div class="num">${categoriesWithMayoreo}</div><div class="label">Categorías con mayoreo</div></div>
+        <div class="stat"><div class="num">${allGroupKeys.length}</div><div class="label">Grupos activos</div></div>
+        <div class="stat"><div class="num">${syncedCount}</div><div class="label">Productos sincronizados</div></div>
+        <div class="stat ${errorCount7d > 0 ? "alert" : ""}"><div class="num">${errorCount7d}</div><div class="label">Errores (7 días)</div></div>
+      </div>
+    `;
+
+    // --- Sección 1: categorías ---
     const categoryRows = categories
       .map((c) => {
         const currentGroup = categoryGroups[c.id] || "";
@@ -143,27 +328,26 @@ router.get("/admin", async (req, res) => {
       .join("");
 
     const section1 = `
-      <h2>1. Asignar categorías a un grupo de mayoreo</h2>
-      <p class="muted">Categorías con el mismo nombre de grupo SUMAN sus cantidades (ej: escribí "pulseras" en Infantil y en Adulto). Dejá vacío si esa categoría no tiene mayoreo.</p>
-      <form method="POST" action="/admin/category-groups">
-        <table>
-          <tr><th>Categoría</th><th>Subcategoría de</th><th>ID</th><th>Grupo de mayoreo</th></tr>
-          ${categoryRows}
-        </table>
-        <button type="submit">Guardar asignaciones</button>
-      </form>
+      <h2><span class="step">1.</span> Categorías → grupos de mayoreo</h2>
+      <p class="section-intro">Categorías con el mismo nombre de grupo SUMAN sus cantidades (ej: escribí "pulseras" en Infantil y en Adulto). Dejá vacío si esa categoría no tiene mayoreo.</p>
+      <div class="card">
+        <input type="search" id="category-search" placeholder="Buscar categoría..." style="margin-bottom:0.8rem">
+        <form method="POST" action="/admin/category-groups">
+          <table id="category-table">
+            <tr><th>Categoría</th><th>Subcategoría de</th><th>ID</th><th>Grupo de mayoreo</th></tr>
+            <tbody>${categoryRows}</tbody>
+          </table>
+          <button type="submit">Guardar asignaciones</button>
+        </form>
+      </div>
     `;
 
     // --- Sección 2: tiers por grupo ---
-    const allGroupKeys = [
-      ...new Set([...Object.values(categoryGroups), ...Object.keys(tierRules)]),
-    ].filter(Boolean);
-
     const groupBlocks = allGroupKeys
       .map((groupKey) => {
         const tiers = tierRules[groupKey] || [];
-        // Ordenamos ascendente para que se vea natural en el formulario
         const sortedTiers = [...tiers].sort((a, b) => a.min_qty - b.min_qty);
+        const productCount = productCounts[groupKey] || 0;
 
         const rows = Array.from({ length: TIER_ROWS })
           .map((_, i) => {
@@ -176,16 +360,18 @@ router.get("/admin", async (req, res) => {
           .join("");
 
         return `<div class="group-block">
+          <h3>${escapeHtml(groupKey)} <span class="badge">${productCount} producto${productCount === 1 ? "" : "s"}</span></h3>
           <form method="POST" action="/admin/tier-rules">
             <input type="hidden" name="group_key" value="${escapeHtml(groupKey)}">
-            <h3>${escapeHtml(groupKey)}</h3>
             <table>
               <tr><th>Cantidad mínima</th><th>Precio por unidad</th></tr>
               ${rows}
             </table>
-            <button type="submit">Guardar tabla de precios</button>
+            <div class="group-actions">
+              <button type="submit">Guardar tabla de precios</button>
+            </div>
           </form>
-          <form method="POST" action="/admin/tier-rules/delete" style="display:inline">
+          <form method="POST" action="/admin/tier-rules/delete" data-confirm="¿Borrar el grupo &quot;${groupKey}&quot; y toda su tabla de precios? Esta acción no se puede deshacer." style="margin-top:0.4rem">
             <input type="hidden" name="group_key" value="${escapeHtml(groupKey)}">
             <button type="submit" class="secondary">Borrar grupo completo</button>
           </form>
@@ -194,22 +380,23 @@ router.get("/admin", async (req, res) => {
       .join("");
 
     const section2 = `
-      <h2>2. Tablas de precio por grupo</h2>
-      <p class="muted">Dejá filas vacías si un grupo tiene menos de ${TIER_ROWS} escalones. Para crear un grupo nuevo, asignáselo primero a una categoría en la sección de arriba.</p>
-      ${groupBlocks || '<p class="muted">Todavía no hay ningún grupo creado.</p>'}
+      <h2><span class="step">2.</span> Tablas de precio por grupo</h2>
+      <p class="section-intro">Dejá filas vacías si un grupo tiene menos de ${TIER_ROWS} escalones. Para crear un grupo nuevo, asignáselo primero a una categoría arriba.</p>
+      ${groupBlocks || '<div class="empty">Todavía no armaste ningún grupo. Asignale un nombre de grupo a una categoría en la sección 1 para empezar.</div>'}
     `;
 
     // --- Sección 3: resync manual ---
     const section3 = `
-      <h2>3. Sincronización de productos</h2>
-      <p class="muted">Los productos nuevos se sincronizan solos vía webhooks. Usá esto solo si sospechás que algo quedó desactualizado.</p>
-      <form method="POST" action="/admin/sync-products">
-        <button type="submit">Sincronizar productos ahora</button>
-      </form>
+      <h2><span class="step">3.</span> Sincronización de productos</h2>
+      <p class="section-intro">Los productos nuevos se sincronizan solos vía webhooks. Usá esto solo si sospechás que algo quedó desactualizado.</p>
+      <div class="card">
+        <form method="POST" action="/admin/sync-products">
+          <button type="submit">Sincronizar productos ahora</button>
+        </form>
+      </div>
     `;
 
-    // --- Sección 4: monitoreo (errores recientes) ---
-    const recentErrors = await getRecentErrors(20);
+    // --- Sección 4: monitoreo ---
     const errorRows = recentErrors
       .map(
         (e) => `<tr>
@@ -221,28 +408,30 @@ router.get("/admin", async (req, res) => {
       .join("");
 
     const section4 = `
-      <h2>4. Monitoreo — errores recientes</h2>
-      <p class="muted">Errores capturados por el webhook de descuentos y el de productos. Si esta lista crece rápido, algo anda mal.</p>
-      ${
-        recentErrors.length > 0
-          ? `<table><tr><th>Cuándo</th><th>Origen</th><th>Mensaje</th></tr>${errorRows}</table>
-             <form method="POST" action="/admin/clear-errors">
-               <button type="submit" class="secondary">Limpiar errores</button>
-             </form>`
-          : '<p class="muted">✅ Sin errores registrados.</p>'
-      }
-      <p class="muted" style="margin-top:1rem">
-        💡 Para que te avisen si el servidor se cae, te recomendamos configurar un monitor gratis en
-        <a href="https://uptimerobot.com" target="_blank" rel="noopener">UptimeRobot</a> apuntando a esta URL:
-        <code>${escapeHtml((process.env.APP_URL || "") + "/")}</code>
-      </p>
+      <h2><span class="step">4.</span> Monitoreo</h2>
+      <p class="section-intro">Errores capturados por el webhook de descuentos y el de productos.</p>
+      <div class="card">
+        ${
+          recentErrors.length > 0
+            ? `<table><tr><th>Cuándo</th><th>Origen</th><th>Mensaje</th></tr>${errorRows}</table>
+               <form method="POST" action="/admin/clear-errors" data-confirm="¿Borrar el historial de errores?" style="margin-top:0.6rem">
+                 <button type="submit" class="secondary">Limpiar errores</button>
+               </form>`
+            : '<div class="empty">✅ Sin errores registrados.</div>'
+        }
+        <p class="muted" style="margin-top:1rem">
+          💡 Para que te avisen si el servidor se cae, configurá un monitor gratis en
+          <a href="https://uptimerobot.com" target="_blank" rel="noopener">UptimeRobot</a> apuntando a:
+          <code>${escapeHtml((process.env.APP_URL || "") + "/")}</code>
+        </p>
+      </div>
     `;
 
-    const savedMsg = req.query.saved
-      ? `<div class="msg">✅ Cambios guardados.</div>`
-      : "";
+    const savedMsg = req.query.saved ? `<div class="msg">✅ Cambios guardados.</div>` : "";
 
-    res.send(layout("Mayoreo Admin", savedMsg + section1 + section2 + section3 + section4));
+    res.send(
+      layout("Mayoreo Admin", savedMsg + scoreboard + section1 + section2 + section3 + section4)
+    );
   } catch (err) {
     console.error("[admin] Error:", err.response?.data || err.message);
     res.status(500).send("Error cargando el panel: " + escapeHtml(err.message));
