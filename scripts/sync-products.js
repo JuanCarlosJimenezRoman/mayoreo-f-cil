@@ -19,23 +19,30 @@
 
 require("dotenv").config();
 const axios = require("axios");
-const { initDb, setProductCategories, pool } = require("../src/db");
+const { initDb, setProductCategories, getFirstStore, pool } = require("../src/db");
 
 const API_VERSION = "2025-03";
-const ACCESS_TOKEN = process.env.ACCESS_TOKEN;
-const STORE_ID = process.env.STORE_ID;
 const { APP_USER_AGENT } = process.env;
 
 async function main() {
-  if (!ACCESS_TOKEN || !STORE_ID) {
-    console.error(
-      "⚠️  Pasá ACCESS_TOKEN y STORE_ID como variables de entorno."
-    );
-    process.exitCode = 1;
-    return;
-  }
-
   await initDb();
+
+  let ACCESS_TOKEN = process.env.ACCESS_TOKEN;
+  let STORE_ID = process.env.STORE_ID;
+
+  if (!ACCESS_TOKEN || !STORE_ID) {
+    const store = await getFirstStore();
+    if (!store) {
+      console.error(
+        "⚠️  No hay ninguna tienda instalada todavía, y no pasaste ACCESS_TOKEN/STORE_ID a mano."
+      );
+      process.exitCode = 1;
+      return;
+    }
+    ACCESS_TOKEN = ACCESS_TOKEN || store.access_token;
+    STORE_ID = STORE_ID || store.store_id;
+    console.log(`(usando la tienda guardada: store_id=${STORE_ID})`);
+  }
 
   let page = 1;
   let totalSynced = 0;
