@@ -279,7 +279,7 @@ async function ensureAdminToken(storeId) {
 
 async function getStoreByAdminToken(token) {
   const { rows } = await pool.query(
-    `SELECT store_id, access_token, scope, promotion_id, admin_token
+    `SELECT store_id, access_token, scope, promotion_id, admin_token, plan_status, trial_ends_at
      FROM stores WHERE admin_token = $1;`,
     [token]
   );
