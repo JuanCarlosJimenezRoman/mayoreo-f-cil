@@ -9,14 +9,13 @@
  * reemplazá los "PEGA_ID_..." de abajo por esos IDs.
  *
  * Uso:
- *   node scripts/seed-tier-rules.js
- * (este script no necesita ACCESS_TOKEN/STORE_ID, solo escribe en tu
- * base de datos local)
+ *   STORE_ID=8057813 node scripts/seed-tier-rules.js
+ * (si no pasás STORE_ID, usa la última tienda instalada)
  * -------------------------------------------------------------
  */
 
 require("dotenv").config();
-const { initDb, setCategoryGroup, clearTierRules, setTierRule, pool } = require("../src/db");
+const { initDb, setCategoryGroup, clearTierRules, setTierRule, getFirstStore, pool } = require("../src/db");
 
 // 👇 IDs reales sacados de sync-categories.js (6 de agosto 2026)
 const CONFIG = [
@@ -64,6 +63,18 @@ async function main() {
 
   await initDb();
 
+  let STORE_ID = process.env.STORE_ID;
+  if (!STORE_ID) {
+    const store = await getFirstStore();
+    if (!store) {
+      console.error("⚠️  No hay ninguna tienda instalada y no pasaste STORE_ID.");
+      process.exitCode = 1;
+      return;
+    }
+    STORE_ID = store.store_id;
+    console.log(`(usando la tienda guardada: store_id=${STORE_ID})`);
+  }
+
   for (const group of CONFIG) {
     const pending = group.categoryIds.some((id) => id.startsWith("PEGA_ID_"));
     if (pending) {
@@ -72,12 +83,12 @@ async function main() {
     }
 
     for (const categoryId of group.categoryIds) {
-      await setCategoryGroup(categoryId, group.groupKey);
+      await setCategoryGroup(STORE_ID, categoryId, group.groupKey);
     }
 
-    await clearTierRules(group.groupKey);
+    await clearTierRules(STORE_ID, group.groupKey);
     for (const tier of group.tiers) {
-      await setTierRule(group.groupKey, tier.minQty, tier.unitPrice);
+      await setTierRule(STORE_ID, group.groupKey, tier.minQty, tier.unitPrice);
     }
 
     console.log(

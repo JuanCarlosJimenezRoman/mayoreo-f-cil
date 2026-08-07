@@ -7,13 +7,17 @@
  * actualizada la tabla `product_categories` sin tener que correr
  * sync-products.js a mano cada vez.
  *
+ * Usa el store_id que viene en el propio payload del webhook (no
+ * asume "la única tienda") para que funcione con múltiples tiendas
+ * instaladas al mismo tiempo.
+ *
  * Se registra con scripts/register-product-webhooks.js.
  * -------------------------------------------------------------
  */
 
 const express = require("express");
 const axios = require("axios");
-const { getFirstStore, setProductCategories, deleteProduct, logError } = require("./db");
+const { getStore, setProductCategories, deleteProduct, logError } = require("./db");
 
 const router = express.Router();
 const API_VERSION = "2025-03";
@@ -25,17 +29,18 @@ router.post("/webhooks/products", express.json(), async (req, res) => {
   // esperando innecesariamente.
   res.status(200).send();
 
-  const { event, id: productId, store_id: storeId } = req.body || {};
+  const { event, id: productId, store_id: storeIdRaw } = req.body || {};
+  const storeId = String(storeIdRaw);
 
   try {
     if (event === "product/deleted") {
-      await deleteProduct(productId);
-      console.log(`[productos] Borrado product_id=${productId}`);
+      await deleteProduct(storeId, productId);
+      console.log(`[productos] Borrado product_id=${productId} (tienda ${storeId})`);
       return;
     }
 
     if (event === "product/created" || event === "product/updated") {
-      const store = await getFirstStore();
+      const store = await getStore(storeId);
       if (!store) return;
 
       const { data } = await axios.get(
@@ -50,9 +55,9 @@ router.post("/webhooks/products", express.json(), async (req, res) => {
       );
 
       const categoryIds = (data.categories || []).map((c) => c.id);
-      await setProductCategories(productId, categoryIds);
+      await setProductCategories(storeId, productId, categoryIds);
       console.log(
-        `[productos] Sincronizado product_id=${productId} → categorías: [${categoryIds.join(", ")}]`
+        `[productos] Sincronizado product_id=${productId} (tienda ${storeId}) → categorías: [${categoryIds.join(", ")}]`
       );
     }
   } catch (err) {
@@ -61,6 +66,7 @@ router.post("/webhooks/products", express.json(), async (req, res) => {
       err.response?.data || err.message
     );
     await logError(
+      storeId,
       "webhook-products",
       JSON.stringify(err.response?.data) || err.message
     );

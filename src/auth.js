@@ -8,8 +8,10 @@
  *     https://www.tiendanube.com/apps/authorize/token
  *  3. Guardás el access_token asociado al store_id (user_id en la
  *     respuesta) para usarlo en cada llamada futura a la API.
- *  4. Aprovechamos ese mismo momento para registrar la promoción
- *     de mayoreo (ver promotions.js).
+ *  4. Registrás la promoción de mayoreo automáticamente.
+ *  5. Generás un "magic link" único para el dashboard de ESA tienda,
+ *     y redirigís al comerciante directo ahí — no necesita usuario
+ *     ni contraseña, el link en sí es su credencial.
  *
  * Referencia oficial:
  * https://tiendanube.github.io/api-documentation/authentication
@@ -18,18 +20,13 @@
 
 const express = require("express");
 const axios = require("axios");
-const { saveStore } = require("./db");
+const { saveStore, ensureAdminToken } = require("./db");
 const { registerPromotion } = require("./promotions");
 
 const router = express.Router();
 
 const { CLIENT_ID, CLIENT_SECRET, APP_URL } = process.env;
 
-// Paso 1: botón/link de instalación. Tiendanube ya te da esta URL
-// cuando creás la app en el panel de socios, pero la dejamos acá
-// como referencia: https://www.tiendanube.com/apps/{app_id}/authorize
-
-// Paso 2: Tiendanube redirige acá con ?code=xxxx
 router.get("/auth/callback", async (req, res) => {
   const { code } = req.query;
 
@@ -49,19 +46,29 @@ router.get("/auth/callback", async (req, res) => {
       { headers: { "Content-Type": "application/json" } }
     );
 
-    const { access_token, token_type, scope, user_id } = tokenResponse.data;
+    const { access_token, scope, user_id } = tokenResponse.data;
     const storeId = String(user_id);
 
     await saveStore(storeId, { access_token, scope });
 
-    // Registramos automáticamente la promoción de mayoreo apenas
-    // se instala la app, así el comerciante no tiene que hacer nada más.
     const promotionId = await registerPromotion(storeId, access_token);
     await saveStore(storeId, { promotion_id: promotionId });
 
-    res.send(
-      "¡App instalada correctamente! Ya podés cerrar esta pestaña y volver al admin de tu tienda."
-    );
+    const adminToken = await ensureAdminToken(storeId);
+    const dashboardUrl = `${APP_URL}/admin?token=${adminToken}`;
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head><meta charset="UTF-8"><title>App instalada</title></head>
+      <body style="font-family: system-ui, sans-serif; max-width: 480px; margin: 4rem auto; text-align: center;">
+        <h1>✅ ¡App instalada correctamente!</h1>
+        <p>Tu panel de administración de mayoreo ya está listo.</p>
+        <p><a href="${dashboardUrl}" style="display:inline-block; background:#e8590c; color:white; padding:0.7rem 1.4rem; border-radius:6px; text-decoration:none; font-weight:600;">Ir a mi panel de mayoreo</a></p>
+        <p style="color:#777; font-size:0.85rem;">Guardá este link — es tu acceso directo, no hace falta usuario ni contraseña.</p>
+      </body>
+      </html>
+    `);
   } catch (err) {
     console.error(
       "Error en el intercambio OAuth:",

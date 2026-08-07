@@ -17,7 +17,7 @@ async function main() {
   await initDb();
 
   const { rows } = await pool.query(
-    `SELECT store_id, promotion_id,
+    `SELECT store_id, promotion_id, admin_token,
             LEFT(access_token, 8) || '...' AS token_preview,
             updated_at
      FROM stores
@@ -34,10 +34,14 @@ async function main() {
     console.log(
       `store_id=${row.store_id}  promotion_id=${row.promotion_id}  token=${row.token_preview}  actualizado=${row.updated_at.toISOString()}`
     );
+    if (row.admin_token) {
+      console.log(
+        `  → link al dashboard: ${process.env.APP_URL || "https://tu-app.onrender.com"}/admin?token=${row.admin_token}`
+      );
+    } else {
+      console.log("  → todavía no tiene admin_token generado.");
+    }
   }
-  console.log(
-    "\n👉 El dashboard usa la PRIMERA de esta lista (la más reciente)."
-  );
 }
 
 main()

@@ -1,23 +1,22 @@
 /**
- * db.js (versión PostgreSQL)
+ * db.js (multi-tienda)
  * -------------------------------------------------------------
- * Reemplaza el almacenamiento en db.json por una tabla en Postgres.
- * Usa la variable de entorno DATABASE_URL (Render te la da al crear
- * la base — ver README para el paso a paso).
+ * Cada tabla de configuración (categorías, grupos, tiers, errores)
+ * está aislada por store_id, para que múltiples tiendas puedan usar
+ * esta misma app sin pisarse los datos entre sí.
  *
- * Guardamos, por store_id:
- *  - access_token: token que te da Tiendanube tras el OAuth
- *  - scope: permisos otorgados
- *  - promotion_id: el ID que devuelve Tiendanube al registrar
- *                   la promoción (POST /promotions)
+ * `stores` guarda, por tienda:
+ *  - access_token: token de la API de Tiendanube
+ *  - promotion_id: la promoción de mayoreo registrada
+ *  - admin_token: token secreto único para el magic link del dashboard
  * -------------------------------------------------------------
  */
 
 const { Pool } = require("pg");
+const crypto = require("crypto");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Render Postgres requiere SSL con certificado autofirmado interno.
   ssl: { rejectUnauthorized: false },
 });
 
@@ -28,75 +27,58 @@ async function initDb() {
       access_token TEXT,
       scope TEXT,
       promotion_id TEXT,
+      admin_token TEXT UNIQUE,
       updated_at TIMESTAMPTZ DEFAULT now()
     );
 
-    -- Copia local de las categorías/subcategorías de Tiendanube.
     CREATE TABLE IF NOT EXISTS categories (
-      id TEXT PRIMARY KEY,
+      store_id TEXT NOT NULL,
+      id TEXT NOT NULL,
       name TEXT,
-      parent_id TEXT
+      parent_id TEXT,
+      PRIMARY KEY (store_id, id)
     );
 
-    -- Copia local de a qué categoría(s) pertenece cada producto.
     CREATE TABLE IF NOT EXISTS product_categories (
+      store_id TEXT NOT NULL,
       product_id TEXT NOT NULL,
       category_id TEXT NOT NULL,
-      PRIMARY KEY (product_id, category_id)
+      PRIMARY KEY (store_id, product_id, category_id)
     );
 
-    -- Agrupa una o más subcategorías bajo una misma "bolsa" de mayoreo.
-    -- Ej: infantil y adulto de pulseras -> mismo group_key "pulseras".
-    -- Ej: unicornio y elite de calcetas -> group_keys separados.
     CREATE TABLE IF NOT EXISTS category_groups (
-      category_id TEXT PRIMARY KEY,
-      group_key TEXT NOT NULL
+      store_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      group_key TEXT NOT NULL,
+      PRIMARY KEY (store_id, category_id)
     );
 
-    -- Tabla de precios por cantidad, por group_key.
     CREATE TABLE IF NOT EXISTS tier_price_rules (
       id SERIAL PRIMARY KEY,
+      store_id TEXT NOT NULL,
       group_key TEXT NOT NULL,
       min_qty INTEGER NOT NULL,
       unit_price NUMERIC NOT NULL,
-      UNIQUE (group_key, min_qty)
+      UNIQUE (store_id, group_key, min_qty)
     );
-    -- Registro de errores para el panel de monitoreo.
+
     CREATE TABLE IF NOT EXISTS error_log (
       id SERIAL PRIMARY KEY,
+      store_id TEXT,
       source TEXT NOT NULL,
       message TEXT NOT NULL,
       created_at TIMESTAMPTZ DEFAULT now()
     );
+
+    -- Migración suave: si alguna de estas tablas ya existía de una
+    -- versión anterior sin store_id, esto la agrega sin romper nada.
+    ALTER TABLE stores ADD COLUMN IF NOT EXISTS admin_token TEXT;
+    ALTER TABLE error_log ADD COLUMN IF NOT EXISTS store_id TEXT;
   `);
   console.log("✅ Tablas listas.");
 }
 
-async function logError(source, message) {
-  try {
-    await pool.query(
-      `INSERT INTO error_log (source, message) VALUES ($1, $2);`,
-      [source, String(message).slice(0, 2000)]
-    );
-  } catch (err) {
-    // Si falla ni siquiera el logging, solo lo mandamos a consola para
-    // no crear un loop de errores.
-    console.error("No se pudo guardar el error en error_log:", err.message);
-  }
-}
-
-async function getRecentErrors(limit = 20) {
-  const { rows } = await pool.query(
-    `SELECT id, source, message, created_at FROM error_log
-     ORDER BY created_at DESC LIMIT $1;`,
-    [limit]
-  );
-  return rows;
-}
-
-async function clearErrors() {
-  await pool.query(`DELETE FROM error_log;`);
-}
+// --- Tiendas ---------------------------------------------------------
 
 async function saveStore(storeId, data) {
   const existing = await getStore(storeId);
@@ -105,18 +87,20 @@ async function saveStore(storeId, data) {
     access_token: data.access_token ?? existing?.access_token ?? null,
     scope: data.scope ?? existing?.scope ?? null,
     promotion_id: data.promotion_id ?? existing?.promotion_id ?? null,
+    admin_token: data.admin_token ?? existing?.admin_token ?? null,
   };
 
   await pool.query(
-    `INSERT INTO stores (store_id, access_token, scope, promotion_id, updated_at)
-     VALUES ($1, $2, $3, $4, now())
+    `INSERT INTO stores (store_id, access_token, scope, promotion_id, admin_token, updated_at)
+     VALUES ($1, $2, $3, $4, $5, now())
      ON CONFLICT (store_id)
      DO UPDATE SET
        access_token = EXCLUDED.access_token,
        scope = EXCLUDED.scope,
        promotion_id = EXCLUDED.promotion_id,
+       admin_token = EXCLUDED.admin_token,
        updated_at = now();`,
-    [storeId, merged.access_token, merged.scope, merged.promotion_id]
+    [storeId, merged.access_token, merged.scope, merged.promotion_id, merged.admin_token]
   );
 
   return merged;
@@ -124,7 +108,7 @@ async function saveStore(storeId, data) {
 
 async function getStore(storeId) {
   const { rows } = await pool.query(
-    `SELECT store_id, access_token, scope, promotion_id
+    `SELECT store_id, access_token, scope, promotion_id, admin_token
      FROM stores WHERE store_id = $1;`,
     [storeId]
   );
@@ -133,61 +117,84 @@ async function getStore(storeId) {
 
 async function getFirstStore() {
   const { rows } = await pool.query(
-    `SELECT store_id, access_token, scope, promotion_id
+    `SELECT store_id, access_token, scope, promotion_id, admin_token
      FROM stores ORDER BY updated_at DESC LIMIT 1;`
+  );
+  return rows[0] || null;
+}
+
+/**
+ * Genera (o regenera) un token secreto único para el magic link del
+ * dashboard de una tienda, y lo guarda.
+ */
+async function ensureAdminToken(storeId) {
+  const token = crypto.randomBytes(24).toString("hex");
+  await pool.query(`UPDATE stores SET admin_token = $2 WHERE store_id = $1;`, [
+    storeId,
+    token,
+  ]);
+  return token;
+}
+
+async function getStoreByAdminToken(token) {
+  const { rows } = await pool.query(
+    `SELECT store_id, access_token, scope, promotion_id, admin_token
+     FROM stores WHERE admin_token = $1;`,
+    [token]
   );
   return rows[0] || null;
 }
 
 // --- Categorías -------------------------------------------------
 
-async function upsertCategory(id, name, parentId) {
+async function upsertCategory(storeId, id, name, parentId) {
   await pool.query(
-    `INSERT INTO categories (id, name, parent_id)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id;`,
-    [String(id), name, parentId ? String(parentId) : null]
+    `INSERT INTO categories (store_id, id, name, parent_id)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (store_id, id) DO UPDATE SET name = EXCLUDED.name, parent_id = EXCLUDED.parent_id;`,
+    [storeId, String(id), name, parentId ? String(parentId) : null]
   );
 }
 
-async function listCategories() {
+async function listCategories(storeId) {
   const { rows } = await pool.query(
-    `SELECT id, name, parent_id FROM categories ORDER BY parent_id NULLS FIRST, name;`
+    `SELECT id, name, parent_id FROM categories WHERE store_id = $1
+     ORDER BY parent_id NULLS FIRST, name;`,
+    [storeId]
   );
   return rows;
 }
 
 // --- Producto -> Categoría ---------------------------------------
 
-async function setProductCategories(productId, categoryIds) {
-  await pool.query(`DELETE FROM product_categories WHERE product_id = $1;`, [
-    String(productId),
-  ]);
+async function setProductCategories(storeId, productId, categoryIds) {
+  await pool.query(
+    `DELETE FROM product_categories WHERE store_id = $1 AND product_id = $2;`,
+    [storeId, String(productId)]
+  );
   for (const categoryId of categoryIds) {
     await pool.query(
-      `INSERT INTO product_categories (product_id, category_id)
-       VALUES ($1, $2)
+      `INSERT INTO product_categories (store_id, product_id, category_id)
+       VALUES ($1, $2, $3)
        ON CONFLICT DO NOTHING;`,
-      [String(productId), String(categoryId)]
+      [storeId, String(productId), String(categoryId)]
     );
   }
 }
 
-async function deleteProduct(productId) {
-  await pool.query(`DELETE FROM product_categories WHERE product_id = $1;`, [
-    String(productId),
-  ]);
+async function deleteProduct(storeId, productId) {
+  await pool.query(
+    `DELETE FROM product_categories WHERE store_id = $1 AND product_id = $2;`,
+    [storeId, String(productId)]
+  );
 }
 
-/**
- * Dado un array de product_id, devuelve un mapa product_id -> [category_id, ...]
- */
-async function getCategoriesForProducts(productIds) {
+async function getCategoriesForProducts(storeId, productIds) {
   if (productIds.length === 0) return {};
   const { rows } = await pool.query(
     `SELECT product_id, category_id FROM product_categories
-     WHERE product_id = ANY($1::text[]);`,
-    [productIds.map(String)]
+     WHERE store_id = $1 AND product_id = ANY($2::text[]);`,
+    [storeId, productIds.map(String)]
   );
   const map = {};
   for (const row of rows) {
@@ -199,18 +206,26 @@ async function getCategoriesForProducts(productIds) {
 
 // --- Agrupación de categorías (group_key) -------------------------
 
-async function setCategoryGroup(categoryId, groupKey) {
+async function setCategoryGroup(storeId, categoryId, groupKey) {
   await pool.query(
-    `INSERT INTO category_groups (category_id, group_key)
-     VALUES ($1, $2)
-     ON CONFLICT (category_id) DO UPDATE SET group_key = EXCLUDED.group_key;`,
-    [String(categoryId), groupKey]
+    `INSERT INTO category_groups (store_id, category_id, group_key)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (store_id, category_id) DO UPDATE SET group_key = EXCLUDED.group_key;`,
+    [storeId, String(categoryId), groupKey]
   );
 }
 
-async function getAllCategoryGroups() {
+async function deleteCategoryGroup(storeId, categoryId) {
+  await pool.query(
+    `DELETE FROM category_groups WHERE store_id = $1 AND category_id = $2;`,
+    [storeId, String(categoryId)]
+  );
+}
+
+async function getAllCategoryGroups(storeId) {
   const { rows } = await pool.query(
-    `SELECT category_id, group_key FROM category_groups;`
+    `SELECT category_id, group_key FROM category_groups WHERE store_id = $1;`,
+    [storeId]
   );
   const map = {};
   for (const row of rows) map[row.category_id] = row.group_key;
@@ -219,30 +234,38 @@ async function getAllCategoryGroups() {
 
 // --- Reglas de precio por cantidad (tiers) -------------------------
 
-async function setTierRule(groupKey, minQty, unitPrice) {
+async function setTierRule(storeId, groupKey, minQty, unitPrice) {
   await pool.query(
-    `INSERT INTO tier_price_rules (group_key, min_qty, unit_price)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (group_key, min_qty) DO UPDATE SET unit_price = EXCLUDED.unit_price;`,
-    [groupKey, minQty, unitPrice]
+    `INSERT INTO tier_price_rules (store_id, group_key, min_qty, unit_price)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (store_id, group_key, min_qty) DO UPDATE SET unit_price = EXCLUDED.unit_price;`,
+    [storeId, groupKey, minQty, unitPrice]
   );
 }
 
-async function clearTierRules(groupKey) {
-  await pool.query(`DELETE FROM tier_price_rules WHERE group_key = $1;`, [
-    groupKey,
-  ]);
+async function clearTierRules(storeId, groupKey) {
+  await pool.query(
+    `DELETE FROM tier_price_rules WHERE store_id = $1 AND group_key = $2;`,
+    [storeId, groupKey]
+  );
 }
 
-/**
- * Devuelve un mapa group_key -> [{min_qty, unit_price}, ...] ordenado
- * de mayor a menor cantidad, listo para recorrer y encontrar el tier
- * que corresponda.
- */
-async function getAllTierRules() {
+async function deleteTierRuleGroup(storeId, groupKey) {
+  await pool.query(
+    `DELETE FROM tier_price_rules WHERE store_id = $1 AND group_key = $2;`,
+    [storeId, groupKey]
+  );
+  await pool.query(
+    `DELETE FROM category_groups WHERE store_id = $1 AND group_key = $2;`,
+    [storeId, groupKey]
+  );
+}
+
+async function getAllTierRules(storeId) {
   const { rows } = await pool.query(
     `SELECT group_key, min_qty, unit_price FROM tier_price_rules
-     ORDER BY group_key, min_qty DESC;`
+     WHERE store_id = $1 ORDER BY group_key, min_qty DESC;`,
+    [storeId]
   );
   const map = {};
   for (const row of rows) {
@@ -255,42 +278,58 @@ async function getAllTierRules() {
   return map;
 }
 
-async function deleteCategoryGroup(categoryId) {
-  await pool.query(`DELETE FROM category_groups WHERE category_id = $1;`, [
-    String(categoryId),
-  ]);
+// --- Monitoreo ------------------------------------------------------
+
+async function logError(storeId, source, message) {
+  try {
+    await pool.query(
+      `INSERT INTO error_log (store_id, source, message) VALUES ($1, $2, $3);`,
+      [storeId || null, source, String(message).slice(0, 2000)]
+    );
+  } catch (err) {
+    console.error("No se pudo guardar el error en error_log:", err.message);
+  }
 }
 
-async function deleteTierRuleGroup(groupKey) {
-  await pool.query(`DELETE FROM tier_price_rules WHERE group_key = $1;`, [
-    groupKey,
-  ]);
-  await pool.query(`DELETE FROM category_groups WHERE group_key = $1;`, [
-    groupKey,
-  ]);
-}
-
-async function getSyncedProductCount() {
+async function getRecentErrors(storeId, limit = 20) {
   const { rows } = await pool.query(
-    `SELECT COUNT(DISTINCT product_id) AS count FROM product_categories;`
+    `SELECT id, source, message, created_at FROM error_log
+     WHERE store_id = $1 ORDER BY created_at DESC LIMIT $2;`,
+    [storeId, limit]
+  );
+  return rows;
+}
+
+async function clearErrors(storeId) {
+  await pool.query(`DELETE FROM error_log WHERE store_id = $1;`, [storeId]);
+}
+
+async function getSyncedProductCount(storeId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(DISTINCT product_id) AS count FROM product_categories WHERE store_id = $1;`,
+    [storeId]
   );
   return parseInt(rows[0].count, 10);
 }
 
-async function getErrorCountSince(days) {
+async function getErrorCountSince(storeId, days) {
   const { rows } = await pool.query(
-    `SELECT COUNT(*) AS count FROM error_log WHERE created_at > now() - ($1 || ' days')::interval;`,
-    [days]
+    `SELECT COUNT(*) AS count FROM error_log
+     WHERE store_id = $1 AND created_at > now() - ($2 || ' days')::interval;`,
+    [storeId, days]
   );
   return parseInt(rows[0].count, 10);
 }
 
-async function getProductCountsByGroup() {
+async function getProductCountsByGroup(storeId) {
   const { rows } = await pool.query(
     `SELECT cg.group_key, COUNT(DISTINCT pc.product_id) AS count
      FROM category_groups cg
-     JOIN product_categories pc ON pc.category_id = cg.category_id
-     GROUP BY cg.group_key;`
+     JOIN product_categories pc
+       ON pc.category_id = cg.category_id AND pc.store_id = cg.store_id
+     WHERE cg.store_id = $1
+     GROUP BY cg.group_key;`,
+    [storeId]
   );
   const map = {};
   for (const row of rows) map[row.group_key] = parseInt(row.count, 10);
@@ -302,6 +341,8 @@ module.exports = {
   saveStore,
   getStore,
   getFirstStore,
+  ensureAdminToken,
+  getStoreByAdminToken,
   pool,
   upsertCategory,
   listCategories,

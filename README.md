@@ -188,7 +188,44 @@ va a actualizar sola la tabla `product_categories` de tu base — no hace falta
 que hagas nada más. El botón "Sincronizar productos ahora" del dashboard
 queda como respaldo manual por si algún webhook se pierde.
 
-- **Un solo comando por promoción compitiendo**: si en el futuro agregás
+## 10. Multi-tienda y magic link
+
+La app ahora soporta **múltiples tiendas instaladas al mismo tiempo**, cada
+una con sus propias categorías, grupos y tablas de precio — completamente
+aisladas entre sí.
+
+### Cómo entra cada comercio a su dashboard
+
+Ya no hay usuario/contraseña compartido. Al instalar la app (flujo OAuth
+real), se genera automáticamente un **magic link único** por tienda, y el
+comerciante es redirigido ahí mismo. Ese link (`/admin?token=...`) es su
+credencial — no necesita recordar nada, y queda guardado en una cookie del
+navegador para no tener que repetirlo en cada visita.
+
+### Si una tienda ya estaba instalada antes de este cambio
+
+No tiene magic link generado todavía. Generalo con:
+
+```bash
+STORE_ID=8057813 node scripts/generate-admin-link.js
+```
+
+(sin `STORE_ID`, usa la última tienda instalada)
+
+### Scripts de un solo comercio (sync-categories, seed-tier-rules, etc.)
+
+Siguen funcionando igual, pero ahora hay que indicarles a qué tienda
+corresponden si tenés más de una instalada:
+
+```bash
+STORE_ID=8057813 node scripts/sync-categories.js
+STORE_ID=8057813 node scripts/sync-products.js
+STORE_ID=8057813 node scripts/seed-tier-rules.js
+STORE_ID=8057813 node scripts/register-product-webhooks.js
+```
+
+Si solo tenés una tienda instalada, podés omitir `STORE_ID` y va a usar esa
+automáticamente.
   cupones o la regla nativa de Tiendanube, revisá que no compitan con esta app
   para el mismo producto (Tiendanube prioriza mostrar un solo cartel de
   descuento a la vez).

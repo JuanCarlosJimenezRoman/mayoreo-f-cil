@@ -3,16 +3,15 @@
  * -------------------------------------------------------------
  * Este endpoint es el "callback_url" que registramos en promotions.js.
  * Tiendanube lo llama por POST cada vez que un cliente modifica el
- * carrito, enviando todo el estado del carrito.
+ * carrito, enviando todo el estado del carrito (incluido su store_id,
+ * lo que nos permite atender múltiples tiendas desde el mismo
+ * endpoint sin que se mezclen sus configuraciones).
  *
- * NUEVA LÓGICA (precio fijo por cantidad, agrupado por categoría):
+ * LÓGICA (precio fijo por cantidad, agrupado por categoría):
  *  1. Solo clientes REGISTRADOS (logueados) acceden al mayoreo.
  *  2. Cada producto del carrito pertenece a una o más categorías. Esas
- *     categorías están agrupadas en "group_key" (ver category_groups):
- *     por ejemplo, "pulseras-infantil" y "pulseras-adulto" comparten
- *     el group_key "pulseras", así que sus cantidades se SUMAN.
- *     "calcetas-unicornio" y "calcetas-elite" tienen group_keys
- *     distintos, así que cuentan por separado.
+ *     categorías están agrupadas en "group_key" (ver category_groups),
+ *     de forma independiente para cada tienda.
  *  3. Para cada group_key, sumamos las unidades totales en el carrito
  *     y buscamos en tier_price_rules el precio por unidad que
  *     corresponde a esa cantidad (el escalón más alto que se cumple).
@@ -20,8 +19,9 @@
  *     × cantidad de esa línea.
  *
  * ⏱️ OJO: 800ms de límite. Toda la data (categorías, agrupaciones,
- * tiers) se lee de Postgres con caché en memoria (ver CACHE_TTL_MS)
- * para no pagar el costo de consultar la base en cada carrito.
+ * tiers) se lee de Postgres con caché en memoria POR TIENDA (ver
+ * CACHE_TTL_MS) para no pagar el costo de consultar la base en cada
+ * carrito.
  * -------------------------------------------------------------
  */
 
@@ -51,20 +51,20 @@ async function getPromotionIdCached(storeId) {
   return promotionId;
 }
 
-// Caché de category_groups y tier_price_rules (cambian poco)
-let configCache = null;
-let configCacheFetchedAt = 0;
-async function getConfigCached() {
-  if (configCache && Date.now() - configCacheFetchedAt < CACHE_TTL_MS) {
-    return configCache;
+// Caché de category_groups y tier_price_rules, por tienda (cambian poco)
+const configCache = new Map(); // storeId -> { categoryGroups, tierRules, fetchedAt }
+async function getConfigCached(storeId) {
+  const cached = configCache.get(storeId);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return cached;
   }
   const [categoryGroups, tierRules] = await Promise.all([
-    getAllCategoryGroups(),
-    getAllTierRules(),
+    getAllCategoryGroups(storeId),
+    getAllTierRules(storeId),
   ]);
-  configCache = { categoryGroups, tierRules };
-  configCacheFetchedAt = Date.now();
-  return configCache;
+  const entry = { categoryGroups, tierRules, fetchedAt: Date.now() };
+  configCache.set(storeId, entry);
+  return entry;
 }
 
 /**
@@ -95,9 +95,10 @@ function findTierPrice(tiers, quantity) {
 
 router.post("/webhooks/discounts", express.json(), async (req, res) => {
   const cart = req.body;
+  const storeId = String(cart.store_id);
 
   try {
-    const promotionId = await getPromotionIdCached(String(cart.store_id));
+    const promotionId = await getPromotionIdCached(storeId);
     if (!promotionId) return res.status(204).send();
 
     const isRegisteredCustomer = Boolean(cart.customer && cart.customer.id);
@@ -108,8 +109,8 @@ router.post("/webhooks/discounts", express.json(), async (req, res) => {
 
     const [categoriesByProduct, { categoryGroups, tierRules }] =
       await Promise.all([
-        getCategoriesForProducts(productIds),
-        getConfigCached(),
+        getCategoriesForProducts(storeId, productIds),
+        getConfigCached(storeId),
       ]);
 
     // 1. Resolver el group_key de cada línea y sumar cantidades por grupo
@@ -185,7 +186,7 @@ router.post("/webhooks/discounts", express.json(), async (req, res) => {
     });
   } catch (err) {
     console.error("Error procesando webhook de carrito:", err);
-    await logError("webhook-discounts", err.message || String(err));
+    await logError(storeId, "webhook-discounts", err.message || String(err));
     return res.status(204).send();
   }
 });

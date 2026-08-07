@@ -63,7 +63,7 @@ async function main() {
       String(name).padEnd(30),
       cat.parent ? String(cat.parent) : "(categoría raíz)"
     );
-    await upsertCategory(cat.id, name, cat.parent);
+    await upsertCategory(STORE_ID, cat.id, name, cat.parent);
   }
 
   console.log(

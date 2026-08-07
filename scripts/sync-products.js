@@ -79,7 +79,7 @@ async function main() {
 
     for (const product of products) {
       const categoryIds = (product.categories || []).map((c) => c.id);
-      await setProductCategories(product.id, categoryIds);
+      await setProductCategories(STORE_ID, product.id, categoryIds);
       const name = product.name?.es || product.name || "(sin nombre)";
       console.log(
         `  ${product.id} — ${name} → categorías: [${categoryIds.join(", ")}]`
