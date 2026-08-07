@@ -61,8 +61,41 @@ async function initDb() {
       unit_price NUMERIC NOT NULL,
       UNIQUE (group_key, min_qty)
     );
+    -- Registro de errores para el panel de monitoreo.
+    CREATE TABLE IF NOT EXISTS error_log (
+      id SERIAL PRIMARY KEY,
+      source TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
   `);
   console.log("✅ Tablas listas.");
+}
+
+async function logError(source, message) {
+  try {
+    await pool.query(
+      `INSERT INTO error_log (source, message) VALUES ($1, $2);`,
+      [source, String(message).slice(0, 2000)]
+    );
+  } catch (err) {
+    // Si falla ni siquiera el logging, solo lo mandamos a consola para
+    // no crear un loop de errores.
+    console.error("No se pudo guardar el error en error_log:", err.message);
+  }
+}
+
+async function getRecentErrors(limit = 20) {
+  const { rows } = await pool.query(
+    `SELECT id, source, message, created_at FROM error_log
+     ORDER BY created_at DESC LIMIT $1;`,
+    [limit]
+  );
+  return rows;
+}
+
+async function clearErrors() {
+  await pool.query(`DELETE FROM error_log;`);
 }
 
 async function saveStore(storeId, data) {
@@ -255,4 +288,7 @@ module.exports = {
   clearTierRules,
   deleteTierRuleGroup,
   getAllTierRules,
+  logError,
+  getRecentErrors,
+  clearErrors,
 };

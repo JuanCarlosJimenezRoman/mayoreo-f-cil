@@ -13,7 +13,7 @@
 
 const express = require("express");
 const axios = require("axios");
-const { getFirstStore, setProductCategories, deleteProduct } = require("./db");
+const { getFirstStore, setProductCategories, deleteProduct, logError } = require("./db");
 
 const router = express.Router();
 const API_VERSION = "2025-03";
@@ -59,6 +59,10 @@ router.post("/webhooks/products", express.json(), async (req, res) => {
     console.error(
       "[productos] Error procesando webhook:",
       err.response?.data || err.message
+    );
+    await logError(
+      "webhook-products",
+      JSON.stringify(err.response?.data) || err.message
     );
   }
 });

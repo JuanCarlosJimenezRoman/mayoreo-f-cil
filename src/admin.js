@@ -31,6 +31,8 @@ const {
   clearTierRules,
   deleteTierRuleGroup,
   setProductCategories,
+  getRecentErrors,
+  clearErrors,
 } = require("./db");
 
 const router = express.Router();
@@ -206,11 +208,41 @@ router.get("/admin", async (req, res) => {
       </form>
     `;
 
+    // --- Sección 4: monitoreo (errores recientes) ---
+    const recentErrors = await getRecentErrors(20);
+    const errorRows = recentErrors
+      .map(
+        (e) => `<tr>
+          <td class="muted">${new Date(e.created_at).toLocaleString("es-MX")}</td>
+          <td>${escapeHtml(e.source)}</td>
+          <td>${escapeHtml(e.message)}</td>
+        </tr>`
+      )
+      .join("");
+
+    const section4 = `
+      <h2>4. Monitoreo — errores recientes</h2>
+      <p class="muted">Errores capturados por el webhook de descuentos y el de productos. Si esta lista crece rápido, algo anda mal.</p>
+      ${
+        recentErrors.length > 0
+          ? `<table><tr><th>Cuándo</th><th>Origen</th><th>Mensaje</th></tr>${errorRows}</table>
+             <form method="POST" action="/admin/clear-errors">
+               <button type="submit" class="secondary">Limpiar errores</button>
+             </form>`
+          : '<p class="muted">✅ Sin errores registrados.</p>'
+      }
+      <p class="muted" style="margin-top:1rem">
+        💡 Para que te avisen si el servidor se cae, te recomendamos configurar un monitor gratis en
+        <a href="https://uptimerobot.com" target="_blank" rel="noopener">UptimeRobot</a> apuntando a esta URL:
+        <code>${escapeHtml((process.env.APP_URL || "") + "/")}</code>
+      </p>
+    `;
+
     const savedMsg = req.query.saved
       ? `<div class="msg">✅ Cambios guardados.</div>`
       : "";
 
-    res.send(layout("Mayoreo Admin", savedMsg + section1 + section2 + section3));
+    res.send(layout("Mayoreo Admin", savedMsg + section1 + section2 + section3 + section4));
   } catch (err) {
     console.error("[admin] Error:", err.response?.data || err.message);
     res.status(500).send("Error cargando el panel: " + escapeHtml(err.message));
@@ -322,6 +354,18 @@ router.post("/admin/sync-products", async (req, res) => {
   } catch (err) {
     console.error("[admin] Error sincronizando productos:", err.message);
     res.status(500).send("Error sincronizando: " + escapeHtml(err.message));
+  }
+});
+
+// --- POST /admin/clear-errors --------------------------------------
+
+router.post("/admin/clear-errors", async (req, res) => {
+  try {
+    await clearErrors();
+    res.redirect("/admin?saved=1");
+  } catch (err) {
+    console.error("[admin] Error limpiando errores:", err.message);
+    res.status(500).send("Error: " + escapeHtml(err.message));
   }
 });
 

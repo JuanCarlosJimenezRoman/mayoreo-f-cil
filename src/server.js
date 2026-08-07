@@ -13,6 +13,10 @@ app.get("/", (req, res) => {
   res.send("Mayoreo App para BASKATBALL 23 — corriendo correctamente ✅");
 });
 
+app.get("/robots.txt", (req, res) => {
+  res.type("text/plain").send("User-agent: *\nDisallow: /admin\n");
+});
+
 app.use(authRouter);
 app.use(webhookRouter);
 app.use(productWebhookRouter);

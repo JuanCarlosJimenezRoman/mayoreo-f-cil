@@ -31,6 +31,7 @@ const {
   getCategoriesForProducts,
   getAllCategoryGroups,
   getAllTierRules,
+  logError,
 } = require("./db");
 
 const router = express.Router();
@@ -184,6 +185,7 @@ router.post("/webhooks/discounts", express.json(), async (req, res) => {
     });
   } catch (err) {
     console.error("Error procesando webhook de carrito:", err);
+    await logError("webhook-discounts", err.message || String(err));
     return res.status(204).send();
   }
 });
