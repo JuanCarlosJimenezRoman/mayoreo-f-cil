@@ -118,7 +118,7 @@ router.get("/", (req, res) => {
         <a class="cta secondary" href="mailto:${SUPPORT_EMAIL}?subject=Tengo%20una%20pregunta%20sobre%20Mayoreo">Hablar con nosotros</a>
       </div>
       <div class="scoreboard-mock">
-        <div class="row"><span>Pulseras Kobe Bryant</span><b>10 u.</b></div>
+        <div class="row"><span>Playera básica</span><b>10 u.</b></div>
         <div class="row"><span>Precio normal</span><span>$60.00</span></div>
         <div class="row"><span>Precio de mayoreo</span><span class="discount">$35.00</span></div>
         <div class="row"><span>Ahorro del cliente</span><span class="discount">-$250.00</span></div>
@@ -171,7 +171,7 @@ router.get("/", (req, res) => {
   <footer>
     <div class="wrap">
       Mayoreo App — hecha para tiendas Tiendanube · <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a>
-      · <a href="/privacidad">Privacidad</a> · <a href="/soporte">Soporte</a>
+      · <a href="/privacidad">Privacidad</a> · <a href="/terminos">Términos</a> · <a href="/soporte">Soporte</a>
     </div>
   </footer>
 </body>

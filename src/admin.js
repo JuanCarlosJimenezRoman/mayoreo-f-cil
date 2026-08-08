@@ -364,14 +364,14 @@ router.get("/admin", async (req, res) => {
           <td>${escapeHtml(nameById[c.id])}</td>
           <td class="muted">${escapeHtml(parentName)}</td>
           <td class="muted">${c.id}</td>
-          <td><input type="text" name="group_key__${c.id}" value="${escapeHtml(currentGroup)}" placeholder="ej: pulseras (vacío = sin mayoreo)"></td>
+          <td><input type="text" name="group_key__${c.id}" value="${escapeHtml(currentGroup)}" placeholder="ej: ropa-adultos (vacío = sin mayoreo)"></td>
         </tr>`;
       })
       .join("");
 
     const section1 = `
       <h2><span class="step">1.</span> Categorías → grupos de mayoreo</h2>
-      <p class="section-intro">Categorías con el mismo nombre de grupo SUMAN sus cantidades (ej: escribí "pulseras" en Infantil y en Adulto). Dejá vacío si esa categoría no tiene mayoreo.</p>
+      <p class="section-intro">Categorías con el mismo nombre de grupo SUMAN sus cantidades (ej: escribí "ropa-adultos" en dos subcategorías distintas para que sumen entre sí). Dejá vacío si esa categoría no tiene mayoreo.</p>
       <div class="card">
         <input type="search" id="category-search" placeholder="Buscar categoría..." style="margin-bottom:0.8rem">
         <form method="POST" action="/admin/category-groups">
@@ -480,7 +480,7 @@ router.get("/admin", async (req, res) => {
         ? `<div class="card" style="border-color:var(--orange)">
              <h2 style="margin-bottom:0.8rem">🚀 Primeros pasos</h2>
              <ol style="margin:0; padding-left:1.2rem; color:var(--text); font-size:0.9rem; line-height:1.9;">
-               <li>Buscá una categoría en la tabla de abajo y escribile un nombre de grupo (ej: <code>pulseras</code>).</li>
+               <li>Buscá una categoría en la tabla de abajo y escribile un nombre de grupo (ej: <code>ropa-adultos</code>).</li>
                <li>Guardá, y va a aparecer una tarjeta nueva más abajo para cargarle la tabla de precios.</li>
                <li>Cargá cantidad mínima y precio por unidad en cada escalón, y guardá.</li>
                <li>Listo — el descuento ya queda activo en el carrito de tu tienda.</li>

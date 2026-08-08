@@ -114,4 +114,37 @@ router.get("/soporte", (req, res) => {
   );
 });
 
+router.get("/terminos", (req, res) => {
+  res.send(
+    simplePage(
+      "Términos y condiciones",
+      `
+    <h2>Términos y condiciones</h2>
+    <p class="updated">Última actualización: ${new Date().toLocaleDateString("es-MX", { year: "numeric", month: "long" })}</p>
+
+    <h3>Qué hace la app</h3>
+    <p>${APP_NAME} aplica precios de mayoreo automáticos (por cantidad y categoría) en el carrito de tu tienda Tiendanube, exclusivamente para clientes con cuenta registrada.</p>
+
+    <h3>Prueba gratis y plan pago</h3>
+    <p>Al instalar la app accedés a un período de prueba gratuito. Al finalizar, podés continuar activando el plan pago; si no lo hacés, los descuentos ya configurados le siguen funcionando a tu tienda con normalidad, pero perdés acceso a modificar la configuración desde el panel.</p>
+
+    <h3>Tu responsabilidad</h3>
+    <p>Sos responsable de la configuración de precios y escalones que cargás en el panel — la app aplica exactamente lo que configuraste. Te recomendamos probar los cambios antes de dejarlos activos para tus clientes.</p>
+
+    <h3>Disponibilidad</h3>
+    <p>Hacemos nuestro mejor esfuerzo para mantener el servicio funcionando de forma continua, pero no garantizamos disponibilidad del 100% del tiempo. Ante una caída del servicio, los precios de tu tienda vuelven a mostrarse sin el descuento hasta que se restablezca.</p>
+
+    <h3>Cancelación</h3>
+    <p>Podés desinstalar la app en cualquier momento desde tu admin de Tiendanube. Al desinstalarla, dejamos de aplicar descuentos en tu tienda y tus datos de configuración quedan marcados para borrado.</p>
+
+    <h3>Cambios a estos términos</h3>
+    <p>Podemos actualizar estos términos ocasionalmente. Los cambios importantes te los vamos a comunicar por email.</p>
+
+    <h3>Contacto</h3>
+    <p><a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a></p>
+  `
+    )
+  );
+});
+
 module.exports = router;

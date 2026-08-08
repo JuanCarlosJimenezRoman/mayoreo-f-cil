@@ -26,6 +26,7 @@
  */
 
 const express = require("express");
+const { captureRawBody, verifySignature } = require("./webhookSecurity");
 const {
   getStore,
   getCategoriesForProducts,
@@ -93,7 +94,7 @@ function findTierPrice(tiers, quantity) {
   return null;
 }
 
-router.post("/webhooks/discounts", express.json(), async (req, res) => {
+router.post("/webhooks/discounts", captureRawBody, verifySignature, async (req, res) => {
   const cart = req.body;
   const storeId = String(cart.store_id);
 

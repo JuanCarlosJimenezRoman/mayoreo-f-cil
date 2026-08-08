@@ -50,7 +50,7 @@ async function registerPromotion(storeId, accessToken) {
   await registerCallback(storeId, accessToken);
 
   const body = {
-    name: "Mayoreo BASKATBALL 23",
+    name: "Mayoreo por cantidad",
     allocation_type: "line_item", // el descuento se aplica producto por producto
     active: true,
   };

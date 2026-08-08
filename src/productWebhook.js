@@ -17,13 +17,14 @@
 
 const express = require("express");
 const axios = require("axios");
+const { captureRawBody, verifySignature } = require("./webhookSecurity");
 const { getStore, setProductCategories, deleteProduct, logError } = require("./db");
 
 const router = express.Router();
 const API_VERSION = "2025-03";
 const { APP_USER_AGENT } = process.env;
 
-router.post("/webhooks/products", express.json(), async (req, res) => {
+router.post("/webhooks/products", captureRawBody, verifySignature, async (req, res) => {
   // Respondemos rápido y procesamos después: acá no hay límite de
   // 800ms, pero igual es buena práctica no dejar a Tiendanube
   // esperando innecesariamente.

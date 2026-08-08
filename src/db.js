@@ -477,6 +477,33 @@ async function getProductCountsByGroup(storeId) {
   return map;
 }
 
+/**
+ * Borra TODOS los datos de una tienda: configuración de mayoreo,
+ * categorías, productos sincronizados, errores, y el registro de la
+ * tienda en sí. Se usa al recibir el webhook obligatorio
+ * `store/redact` (después de que un comerciante desinstala la app).
+ */
+async function deleteStoreCompletely(storeId) {
+  await pool.query(`DELETE FROM tier_price_rules WHERE store_id = $1;`, [storeId]);
+  await pool.query(`DELETE FROM category_groups WHERE store_id = $1;`, [storeId]);
+  await pool.query(`DELETE FROM product_categories WHERE store_id = $1;`, [storeId]);
+  await pool.query(`DELETE FROM categories WHERE store_id = $1;`, [storeId]);
+  await pool.query(`DELETE FROM error_log WHERE store_id = $1;`, [storeId]);
+  await pool.query(`DELETE FROM stores WHERE store_id = $1;`, [storeId]);
+}
+
+/**
+ * Marca una tienda como desinstalada (sin borrar todavía los datos —
+ * eso lo hace deleteStoreCompletely cuando llega store/redact). Sirve
+ * para dejar de intentar usarla mientras tanto.
+ */
+async function markStoreUninstalled(storeId) {
+  await pool.query(
+    `UPDATE stores SET plan_status = 'uninstalled', updated_at = now() WHERE store_id = $1;`,
+    [storeId]
+  );
+}
+
 module.exports = {
   initDb,
   saveStore,
@@ -487,6 +514,8 @@ module.exports = {
   activatePaidPlan,
   isStoreActive,
   daysLeftInTrial,
+  deleteStoreCompletely,
+  markStoreUninstalled,
   pool,
   upsertCategory,
   listCategories,

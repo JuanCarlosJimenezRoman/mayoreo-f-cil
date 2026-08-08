@@ -6,6 +6,7 @@ const pagesRouter = require("./pages");
 const authRouter = require("./auth");
 const webhookRouter = require("./webhook");
 const productWebhookRouter = require("./productWebhook");
+const lifecycleWebhookRouter = require("./lifecycleWebhook");
 const adminRouter = require("./admin");
 
 const app = express();
@@ -20,6 +21,7 @@ app.use(pagesRouter);
 app.use(authRouter);
 app.use(webhookRouter);
 app.use(productWebhookRouter);
+app.use(lifecycleWebhookRouter);
 app.use(adminRouter);
 
 async function start() {
